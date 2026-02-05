@@ -1,0 +1,1525 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Instant Search — Apple-Style</title>
+  <meta name="color-scheme" content="light dark" />
+  <style>
+    /* ===== Apple-inspired base ===== */
+    :root{
+      --bg: #f5f5f7;
+      --text:#111113;
+      --muted:#6e6e73;
+      --card:#ffffff;
+      --border:#d2d2d7;
+      --accent:#0a84ff; /* iOS blue */
+      --ring: rgba(10,132,255,.14);
+      --shadow: 0 8px 30px rgba(0,0,0,.08);
+      --radius: 16px;
+      --radius-sm: 12px;
+      --radius-xl: 24px;
+      --sf: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    }
+    @media (prefers-color-scheme: dark){
+      :root{
+        --bg:#0b0b0c;
+        --text:#fbfbfd;
+        --muted:#9ea0a6;
+        --card:#1c1c1e;
+        --border:#3a3a3c;
+        --shadow: 0 10px 40px rgba(0,0,0,.35);
+        --ring: rgba(10,132,255,.22);
+      }
+    }
+    html,body{height:100%;}
+    body{margin:0;background:radial-gradient(1200px 1200px at 80% -10%, rgba(10,132,255,.06), transparent),
+                      radial-gradient(900px 900px at 0% 110%, rgba(0,0,0,.06), transparent),
+                      var(--bg);
+         font-family:var(--sf); color:var(--text);}
+
+    /* ===== Header ===== */
+    header{
+      position:sticky; top:0; z-index:50; backdrop-filter:saturate(180%) blur(16px);
+      background:color-mix(in srgb, var(--bg) 84%, transparent);
+      border-bottom:1px solid var(--border);
+    }
+    .wrap{ max-width:1100px; margin:0 auto; padding:18px 18px; }
+    .titlebar{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+    .logo{ width:14px; height:14px; border-radius:4px; background: linear-gradient(145deg, #0a84ff, #64d2ff); box-shadow: inset 0 0 0 1px rgba(255,255,255,.2); }
+    h1{ font-size:18px; letter-spacing:-.01em; margin:0; font-weight:700; }
+
+    /* Search row */
+    .search-row{ display:grid; grid-template-columns:1fr auto auto auto; gap:10px; margin-top:12px; }
+    .search{ display:flex; align-items:center; gap:8px; background:var(--card); border:1px solid var(--border);
+             border-radius:999px; padding:8px 12px; box-shadow: var(--shadow); }
+    .search input{ flex:1; border:none; outline:none; background:transparent; font-size:16px; min-width:0; color:var(--text); }
+    .search .kbd{ font:600 12px var(--sf); color:var(--muted); padding:2px 6px; border:1px solid var(--border); border-radius:6px; }
+
+    .select{ display:flex; align-items:center; gap:8px; padding:8px 12px; border:1px solid var(--border); background:var(--card);
+             border-radius:999px; box-shadow: var(--shadow); }
+    select{ appearance:none; background:transparent; border:none; outline:none; font:600 14px var(--sf); color:var(--text); }
+
+    .badge{ display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:999px; border:1px solid var(--border); background:var(--card); font-weight:600; }
+
+    /* ===== Main Layout ===== */
+    .grid{ display:grid; grid-template-columns:320px 1fr; gap:16px; padding:18px; }
+    @media (max-width: 960px){ .grid{ grid-template-columns:1fr; } }
+
+    /* ===== Left: Ingest Panel ===== */
+    .panel{ background:var(--card); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); }
+    .panel h2{ font-size:14px; letter-spacing:.02em; text-transform:uppercase; color:var(--muted); margin:0; padding:14px 14px 0; }
+    .panel .inner{ padding:14px; }
+
+    .drop{ border:1.5px dashed var(--border); border-radius:14px; padding:16px; text-align:center; transition: border-color .15s, background .15s; }
+    .drop.drag{ border-color:var(--accent); background:color-mix(in srgb, var(--accent) 8%, transparent); }
+    .drop p{ margin:6px 0; color:var(--muted); font-size:14px; }
+    .btn{ appearance:none; border:none; background:var(--text); color:var(--bg); padding:10px 14px; border-radius:12px; font-weight:700; cursor:pointer; }
+    .btn.ghost{ background:transparent; color:var(--text); border:1px solid var(--border); }
+
+    .mini-list{ margin-top:12px; display:flex; flex-direction:column; gap:8px; max-height:280px; overflow:auto; }
+    .mini-item{ display:flex; align-items:center; gap:10px; padding:10px; border:1px solid var(--border); border-radius:12px; }
+    .mini-status{ width:18px; height:18px; border-radius:999px; background:#d0d3da; display:grid; place-items:center; font-size:12px; }
+    .mini-status.done{ background:#34c759; color:#000; }
+    .mini-status.load{ background:#ffd60a; color:#000; animation: pulse 1s infinite; }
+    @keyframes pulse{ 50%{ filter:brightness(1.2); } }
+
+    .cards{ display:flex; flex-direction:column; }
+    .card{ padding:14px 16px; border-bottom:1px solid var(--border); display:grid; grid-template-columns: 32px 1fr auto; gap:12px; align-items:start; cursor:pointer; }
+    .card:last-child{ border-bottom:none; }
+    .icn{ width:28px; height:28px; border-radius:8px; background:#f0f1f5; display:grid; place-items:center; font-size:14px; color:#333; }
+    .icn.txt{ background:linear-gradient(145deg,#b3c7ff,#c7d2ff); }
+    .icn.pdf{ background:linear-gradient(145deg,#ff9aa2,#ffd1dc); }
+    .icn.img{ background:linear-gradient(145deg,#9dd7d0,#a9e4b3); }
+    .icn.note{ background:linear-gradient(145deg,#ffe3a3,#ffd0a8); }
+
+    .meta{ font-size:12px; color:var(--muted); margin-top:2px; }
+    .snippet{ margin-top:6px; line-height:1.45; }
+    mark{ background: color-mix(in srgb, var(--accent) 40%, transparent); padding:1px 2px; border-radius:4px; }
+
+    /* Pills / filters */
+    .pills{ display:flex; gap:6px; flex-wrap:wrap; }
+    .pill{ padding:6px 10px; border:1px solid var(--border); border-radius:999px; font:600 12px var(--sf); background:var(--card); cursor:pointer; }
+    .pill.active{ background:var(--accent); color:#fff; border-color:var(--accent); }
+
+    /* Modal */
+    dialog{ border:none; padding:0; border-radius:20px; width:min(720px, 94vw); }
+    .modal-head{ display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--border); background:var(--card); border-top-left-radius:20px; border-top-right-radius:20px; }
+    .modal-body{ padding:14px 16px; background:var(--card); }
+    .note-editor{ border:1px solid var(--border); border-radius:14px; padding:14px; min-height:220px; background:linear-gradient(180deg, color-mix(in srgb, var(--card) 92%, transparent), var(--card)); outline:none; }
+    .modal-foot{ display:flex; justify-content:flex-end; gap:8px; padding:14px 16px; border-top:1px solid var(--border); background:var(--card); border-bottom-left-radius:20px; border-bottom-right-radius:20px; }
+
+    .muted{ color:var(--muted); }
+    .hidden{ display:none !important; }
+
+    /* ——— Search floating dock ——— */
+.search-dock{
+  position: sticky; top: 8px; z-index: 5;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 12px; border-radius: 16px;
+  background: color-mix(in srgb, var(--card, #fff) 75%, transparent);
+  border: 1px solid var(--border, #e6e6e6);
+  box-shadow: 0 8px 24px rgba(0,0,0,.06);
+  backdrop-filter: saturate(140%) blur(10px);
+  margin: 6px 0 10px;
+}
+
+.search-dock .pills{ display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+.search-dock .pill{
+  appearance:none; border:1px solid var(--border, #e6e6e6);
+  background: var(--card, #fff); color: var(--text, #111);
+  border-radius: 999px; padding: 7px 12px; font-weight: 600; cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, color .15s ease, transform .1s ease;
+}
+.search-dock .pill:hover{ transform: translateY(-1px); }
+.search-dock .pill.active{
+  --_accent: var(--accent, #0a84ff);
+  background: var(--_accent); border-color: var(--_accent); color: #fff;
+}
+
+.search-dock .count{ font-size: 12px; opacity: .7; }
+
+/* Right results panel: transparent, no border */
+.results{
+  background: transparent; 
+  border: none; 
+  box-shadow: none; 
+  min-height: 300px;
+}
+
+/* Faint title line ABOVE each result tile */
+.result-titleline{
+  font-size: 12px; font-weight: 600; letter-spacing: .01em;
+  color: color-mix(in srgb, var(--text, #111) 60%, transparent);
+  margin: 10px 6px 4px 6px;
+}
+
+/* Compact tile for the snippet */
+.result-card{
+  border: 1px solid var(--border);
+  background: var(--card);
+  border-radius: 14px;
+  box-shadow: 0 6px 18px rgba(0,0,0,.05);
+  padding: 10px 12px;
+  margin: 0 0 10px 0;
+  cursor: pointer;
+}
+
+/* Snippet text + highlights */
+.result-card .snippet{ line-height: 1.45; }
+.result-card mark{ background: rgba(10,132,255,.18); border-radius: 2px; padding: 0 .5px; }
+
+/* Centered pills under Drop Files (leftDock) */
+.left-dock{
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  margin: 10px 0 12px 0;
+}
+.left-dock .pills{
+  display: flex; gap: 8px; align-items: center; justify-content: center;
+}
+.left-dock .pill{
+  appearance: none; border:1px solid var(--border);
+  background: var(--card); color: var(--text);
+  border-radius: 999px; padding: 7px 12px; font-weight: 600; cursor: pointer;
+}
+.left-dock .pill.active{
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
+/* — place #results inside the rounded search input, on the right — */
+.search .counter-inline{
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .01em;
+  color: color-mix(in srgb, var(--text, #111) 60%, transparent);
+  white-space: nowrap;
+}
+
+/* hide the ⌘K badge */
+.search .kbd{ display: none !important; }
+/* — selection mode visuals — */
+.mini-item.selectable{ cursor: pointer; transition: background .15s ease, border-color .15s ease; }
+.mini-item.selectable:hover{ background: color-mix(in srgb, var(--card) 90%, var(--text) 10%); }
+.mini-item.sel{
+  background: color-mix(in srgb, var(--card) 80%, var(--text) 20%);
+  border-color: color-mix(in srgb, var(--border) 40%, var(--text) 60%);
+}
+/* — row chrome: icons top-right, tag bottom-right — */
+.mini-item{
+  position: relative;
+  /* normal content spacing */
+  padding: 12px 56px 36px 16px; /* top | right (icons) | bottom (tag) | left */
+}
+
+.mini-item .row-actions{
+  position: absolute; top: 8px; right: 8px;
+  display: flex; gap: 8px; align-items: center;
+  opacity: .9;
+}
+
+.row-actions .icon-btn{
+  appearance: none; border: 0; background: transparent;
+  padding: 6px; border-radius: 10px; cursor: pointer;
+  line-height: 0; /* tight hitbox */
+  transition: background .15s ease, transform .08s ease;
+}
+.row-actions .icon-btn:active{ transform: scale(.96); }
+.row-actions .icon-btn:hover{
+  background: color-mix(in srgb, var(--card) 70%, var(--text) 30%);
+}
+
+/* colors */
+.icon-edit{ color: #0a84ff; }      /* iOS blue */
+.icon-del { color: #ff3b30; }      /* iOS red  */
+
+/* size the SVGs */
+.row-actions svg{ width: 18px; height: 18px; display: block; }
+
+.mini-item .tag{
+  position: absolute; left: 12px; bottom: 8px;
+  font-size: 11px; font-weight: 700;
+  padding: 4px 8px; border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--card); color: var(--muted);
+  opacity: .95; /* softer so it doesn't steal focus */
+}
+/* add near other styles */
+.mini-item.sel.drag-target { outline: 2px solid var(--accent); }
+/* Library panel header: title left, + Folder right */
+.panel-header{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:14px 14px 0 14px;  /* match panel h2’s left/right + top = 14 */
+}
+.panel-header h2{
+  padding:0 !important;     /* fix vertical misalignment */
+  margin:0;
+}
+
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+        <div class="titlebar" style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="display:flex;align-items:center;gap:10px;">
+            <div class="logo" aria-hidden="true"></div>
+            <h1>Instant Search</h1>
+        </div>
+        </div>
+
+        <div class="search-row" role="search">
+        <div class="search" style="--ring: var(--ring)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input id="q" placeholder="Type to search…" autocomplete="off" aria-label="Search" />
+            <span class="kbd">⌘K</span>
+        </div>
+        <div class="select">
+            <span class="muted">Mode</span>
+            <select id="mode" aria-label="Search mode">
+            <option value="cluster" selected>Cluster (all words near)</option>
+            <option value="phrase">Exact phrase</option>
+            <option value="boolean">Boolean (AND/OR/NOT)</option>
+          </select>
+        </div>
+        <div class="select">
+        <span class="muted">Proximity</span>
+        <select id="win" aria-label="Cluster window">
+            <option value="80" selected>80 chars</option>
+            <option value="120">120 chars</option>
+            <option value="200">200 chars</option>
+        </select>
+        </div>
+        <div class="select">
+          <span class="muted">Type</span>
+          <select id="filter" aria-label="Type filter">
+            <option value="all" selected>All types</option>
+            <option value="note">Notes</option>
+            <option value="txt">Text files</option>
+            <option value="pdf">PDFs</option>
+            <option value="img">Images</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="grid wrap">
+    <!-- LEFT: ingest -->
+    <aside class="panel">
+      <div class="panel-header">
+        <h2>Library</h2>
+        <button id="newFolderBtn" class="pill">+ Folder</button>
+      </div>
+
+      <div class="inner">
+        <div id="drop" class="drop" tabindex="0" aria-label="Upload files">
+            <p><strong>Drop files here</strong> or</p>
+            <p>
+            <button class="btn" id="pickBtn">Choose Files</button>
+            <button class="btn ghost" id="addNoteBtn">Add Note</button>
+            </p>
+            <p class="muted">Supported: .txt, .md, .pdf, .png, .jpg, .jpeg, .webp</p>
+            <input id="picker" type="file" multiple class="hidden" accept=".txt,.md,.pdf,.png,.jpg,.jpeg,.webp" />
+        </div>
+
+        <!-- Centered pills live here -->
+        <div id="leftDock"></div>
+        <nav id="crumbs" class="muted" style="font-size:12px; margin:8px 0 6px 0;"></nav>
+
+        <div class="mini-list" id="ingestList" aria-live="polite"></div>
+        </div>
+    </aside>
+
+    <!-- RIGHT: results -->
+    <section class="results">
+      <div class="cards" id="cards"></div>
+    </section>
+  </main>
+
+  <!-- Note Modal -->
+  <dialog id="noteModal">
+    <div class="modal-head">
+      <div>
+        <div style="font-weight:700">Note</div>
+        <div class="muted" style="font-size:12px">Paste raw text — we keep your exact formatting</div>
+      </div>
+      <button class="btn ghost" id="closeNote">Close</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="editingId" value="" />
+      <label class="muted" style="font-weight:700; font-size:12px">Title</label>
+      <input id="noteTitle" placeholder="Optional title" style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:var(--card); color:var(--text); font:600 14px var(--sf);" />
+      <div style="height:10px"></div>
+      <label class="muted" style="font-weight:700; font-size:12px">Content</label>
+      <div id="noteEditor" class="note-editor" contenteditable="true" aria-label="Note content"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" id="saveNote">Save</button>
+    </div>
+  </dialog>
+
+  <!-- Document Viewer Modal -->
+  <dialog id="viewerModal">
+    <div class="modal-head">
+      <div style="font-weight:700" id="viewerTitle">Preview</div>
+      <div>
+        <button class="btn ghost" id="prevHit">Previous</button>
+        <button class="btn" id="nextHit">Next</button>
+        <button class="btn ghost" id="closeViewer">Close</button>
+      </div>
+    </div>
+    <div class="modal-body" style="max-height:70vh; overflow:auto">
+      <div id="viewerBody" style="white-space:pre-wrap; line-height:1.5"></div>
+    </div>
+  </dialog>
+
+  <!-- ===== Scripts ===== -->
+  <!-- PDF.js for extracting text from PDFs -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+  // ===== State =====
+// ===== State =====
+const state = {
+  docs: [],              // { id, type, title, text, html, meta, ts, folderId? }
+  byId: new Map(),
+  sort: 'relevance',
+  selectMode: false,
+  selectedIds: new Set(),
+  folders: [],           // [{ id, name, parentId:null|folderId }]
+  activeFolderId: null,  // null => “All Files”
+};
+
+  const $$ = sel => Array.from(document.querySelectorAll(sel));
+  const $m = sel => document.querySelector(sel);
+
+  // ===== Helpers =====
+  function uid(){ return Math.random().toString(36).slice(2) }
+  function extOf(name=''){ return (name.split('.').pop()||'').toLowerCase(); }
+  function iconFor(type){ return {txt:'txt', pdf:'pdf', img:'img', note:'note'}[type]||'txt'; }
+  function bytes(n){ if(!n && n!==0) return ''; const u=['B','KB','MB','GB']; let i=0; while(n>1024 && i<u.length-1){n/=1024;i++} return n.toFixed( (i?1:0) )+u[i] }
+  function debounced(fn, ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms) } }
+  function escapeHtml(s){ return (s||'').replace(/[&<>\"']/g, m=> ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;','\'':'&#39;'}[m]) ) }
+
+  function isAncestor(possibleAncestorId, childId){
+  if (!possibleAncestorId || !childId) return false;
+  let cur = state.folders.find(f => f.id === childId);
+  while (cur && cur.parentId){
+    if (cur.parentId === possibleAncestorId) return true;
+    cur = state.folders.find(f => f.id === cur.parentId);
+  }
+  return false;
+}
+
+function formatMetaLine(d){
+  const title = (d.title || '').trim();
+  const metaName = (d.meta?.name || '').trim();
+  const size = Number(d.meta?.size || 0);
+
+  const parts = [];
+  // only show file name if it's different from the title
+  if (metaName && metaName.toLowerCase() !== title.toLowerCase()){
+    parts.push(escapeHtml(metaName));
+  }
+  // only show size if > 0
+  if (size > 0){
+    parts.push(bytes(size));
+  }
+  // do NOT include type here — we show it in the bottom-right tag pill now
+  return parts.join(' • ');
+}
+
+// Set the results text directly in the search bar (no dependency on #counter)
+function mountCounterInSearchBar(text){
+  const searchBox = document.querySelector('.search');
+  if (!searchBox) return;
+
+  let host = searchBox.querySelector('.counter-inline');
+  if (!host) {
+    host = document.createElement('div');
+    host.className = 'counter-inline';
+    searchBox.appendChild(host);
+  }
+
+  host.textContent = text || '';
+
+  const kbd = searchBox.querySelector('.kbd');
+  if (kbd) kbd.remove();
+}
+
+function renderLeftDock(){
+  const host = document.getElementById('leftDock');
+  if (!host) return;
+
+  host.innerHTML = '';
+  const dock = document.createElement('div');
+  dock.className = 'left-dock';
+
+  const newFolderBtn = document.getElementById('newFolderBtn');
+  if (newFolderBtn) {
+    newFolderBtn.onclick = () => {
+      const name = prompt('Folder name?')?.trim();
+      if (!name) return;
+      const id = uid();
+      state.folders.push({ id, name, parentId: state.activeFolderId || null });
+      saveStateToLocal();
+      setActiveFolder(id);
+    };
+  }
+
+  const pills = document.createElement('div');
+  pills.className = 'pills';
+
+  const mkSort = (key, label) => {
+    const b = document.createElement('button');
+    b.className = 'pill' + (state.sort === key ? ' active' : '');
+    b.dataset.key = key;
+    b.textContent = label;
+    b.addEventListener('click', () => {
+      state.sort = key;
+      refreshSearch();
+      host.querySelectorAll('.pill[data-key]').forEach(x =>
+        x.classList.toggle('active', x.dataset.key === state.sort)
+      );
+    });
+    return b;
+  };
+
+  // — Sort pills
+  pills.append(
+    mkSort('relevance','Relevance'),
+    mkSort('newest','Newest'),
+    mkSort('oldest','Oldest')
+  );
+
+  // — Select pill (toggle) → shows a number while in select mode
+  const selectBtn = document.createElement('button');
+  selectBtn.className = 'pill' + (state.selectMode ? ' active' : '');
+  selectBtn.id = 'selectToggle';
+
+  const setSelectLabel = () => {
+    if (state.selectMode) {
+      // show numeric count while selecting (starts at 0)
+      selectBtn.textContent = (state.selectedIds?.size || 0) ? String(state.selectedIds.size) : 'Select';
+    } else {
+      // show the word when not in select mode
+      selectBtn.textContent = 'Select';
+    }
+  };
+  setSelectLabel();
+
+  selectBtn.addEventListener('click', () => {
+    state.selectMode = !state.selectMode;
+    if (!state.selectMode) state.selectedIds.clear(); // leaving mode clears selection
+    renderLibrary();         // repaint left list for visual state (also updates label)
+    refreshSearch();         // re-run search with/without selection filter
+  });
+
+  pills.append(selectBtn);
+  dock.appendChild(pills);
+  host.appendChild(dock);
+}
+
+  function renderSearchDock(listEl, { total }){
+  // Remove old dock if present
+  const old = listEl.previousElementSibling;
+  if (old && old.classList?.contains('search-dock')) old.remove();
+
+  const dock = document.createElement('div');
+  dock.className = 'search-dock';
+
+  const pills = document.createElement('div');
+  pills.className = 'pills';
+
+  const mk = (key, label) => {
+    const b = document.createElement('button');
+    b.className = 'pill' + (state?.sort === key ? ' active' : '');
+    b.textContent = label;
+    b.addEventListener('click', () => {
+      if (!window.state) window.state = {};
+      state.sort = key;                 // you already honor this in your search
+      try { refreshSearch?.(); } catch {}
+    });
+    return b;
+  };
+
+  pills.append(
+    mk('relevance','Relevance'),
+    mk('newest','Newest'),
+    mk('oldest','Oldest')
+  );
+
+  const meta = document.createElement('div');
+  meta.className = 'count';
+  meta.textContent = `${total} result${total===1?'':'s'}`;
+
+  dock.append(pills, meta);
+
+  // Insert just above results list
+  listEl.parentNode.insertBefore(dock, listEl);
+}
+
+  // Highlight occurrences in text (case-insensitive). Accepts array of query tokens or a string.
+  function highlight(text, terms){
+    if(!text) return '';
+    if(!terms || (Array.isArray(terms) && !terms.length)) return escapeHtml(text);
+    const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const tokens = Array.isArray(terms) ? terms.filter(Boolean) : [terms];
+    if(!tokens.length) return escapeHtml(text);
+    const pattern = new RegExp('(' + tokens.map(esc).join('|') + ')', 'gi');
+    return escapeHtml(text).replace(pattern, '<mark>$1</mark>');
+  }
+
+  // Snippet around an index
+  function snippetAt(text, idx, len){
+    const t = text||'';
+    if(idx<0) return escapeHtml(t.slice(0,160)) + (t.length>160?'…':'');
+    const start = Math.max(0, idx - 60);
+    const end = Math.min(t.length, idx + len + 100);
+    const chunk = t.slice(start, end);
+    return (start>0?'…':'') + escapeHtml(chunk) + (end<t.length?'…':'');
+  }
+
+  function safeRe(s, flags='gi'){
+  return new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags);
+}
+function tokenize(q){ return q.trim().split(/\s+/).filter(Boolean); }
+
+function findAllIndices(text, term){
+  const re = safeRe(term,'gi'); const out=[]; let m;
+  while((m = re.exec(text))){ out.push({idx:m.index, len:m[0].length}); if(out.length>500) break; }
+  return out;
+}
+
+// Return spans where ALL terms appear within `win` characters: [{start,end}]
+function clusterSpans(text, terms, win){
+  if(!terms.length) return [];
+  const occ = [];
+  for(const t of terms){
+    const hits = findAllIndices(text, t);
+    if(!hits.length) return []; // any term missing => no spans
+    for(const h of hits){ occ.push({pos:h.idx, len:h.len, term:t.toLowerCase()}); }
+  }
+  occ.sort((a,b)=> a.pos - b.pos);
+  const need = new Set(terms.map(t=>t.toLowerCase()));
+  const have = new Map();
+  let i=0; const spans=[];
+  for(let j=0;j<occ.length;j++){
+    const tj = occ[j].term; have.set(tj,(have.get(tj)||0)+1);
+    while(i<=j && have.size===need.size){
+      const start = occ[i].pos;
+      const end   = occ[j].pos + occ[j].len;
+      if(end - start <= win){
+        spans.push({start,end});
+        const ti = occ[i].term; have.set(ti,have.get(ti)-1); if(have.get(ti)===0) have.delete(ti); i++;
+      }else{
+        const ti = occ[i].term; have.set(ti,have.get(ti)-1); if(have.get(ti)===0) have.delete(ti); i++;
+      }
+      if(spans.length>200) break;
+    }
+    if(spans.length>200) break;
+  }
+  spans.sort((a,b)=>a.start-b.start);
+  const compact=[]; for(const s of spans){ if(!compact.length || s.start>compact[compact.length-1].end) compact.push(s); }
+  return compact;
+}
+
+  // Find all match windows for token list or phrase in a string
+  function findAllMatches(text, terms, mode){
+    const t = (text||'');
+    const out = [];
+    const MAX = 200; // higher cap since we split per-hit tiles
+    if(!t || !terms || (Array.isArray(terms)&&!terms.length)) return out;
+    if(mode==='phrase'){
+      const q = terms.toLowerCase();
+      const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'gi');   // phrase
+      let m; while((m=re.exec(t)) && out.length<MAX){ out.push({idx:m.index, len:m[0].length}); }
+      return out;
+    }
+    const toks = Array.isArray(terms)? terms : terms.split(/\s+/);
+    for(const raw of toks){
+      const tok = raw.trim(); if(!tok) continue;
+      const re = new RegExp(tok.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'gi'); // tokens
+      let m; while((m=re.exec(t)) && out.length<MAX){ out.push({idx:m.index, len:m[0].length}); }
+    }
+    out.sort((a,b)=> a.idx - b.idx);
+    return out;
+  }
+
+  // ===== Ingest UI =====
+  const drop = $m('#drop');
+  ['dragenter','dragover'].forEach(ev =>
+    drop.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); drop.classList.add('drag'); })
+  );
+  ['dragleave','drop'].forEach(ev =>
+    drop.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); drop.classList.remove('drag'); })
+  );
+  drop.addEventListener('drop', e => handleFiles(e.dataTransfer.files));
+  $m('#pickBtn').onclick = () => $m('#picker').click();
+  $m('#picker').addEventListener('change', e => handleFiles(e.target.files));
+
+const LS_KEY = 'instant-search-state-v1';
+
+function hydrateStateFromLocal(){
+  try{
+    const s = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
+    if (!s) return;
+
+    if (Array.isArray(s.docs)){
+      state.docs = s.docs.map(d => ({
+        id: d.id, type: d.type || 'note',
+        title: d.title || '', text: d.text || '', html: d.html || '',
+        meta: d.meta || null, ts: Number(d.ts || 0),
+        folderId: d.folderId ?? null,
+      }));
+      state.byId = new Map(state.docs.map(d => [d.id, d]));
+    }
+
+    state.folders = Array.isArray(s.folders)
+      ? s.folders.map(f => ({ id: f.id, name: f.name || 'Untitled', parentId: f.parentId ?? null }))
+      : [];
+
+    state.activeFolderId = s.activeFolderId ?? null;
+    state.sort = s.sort || 'relevance';
+  }catch{}
+}
+
+function saveStateToLocal(){
+  try{
+    const minimal = {
+      docs: state.docs.map(({id,type,title,text,html,meta,ts,folderId}) =>
+        ({ id,type,title,text,html,meta,ts,folderId: folderId ?? null })
+      ),
+      folders: state.folders.map(f => ({ id: f.id, name: f.name, parentId: f.parentId ?? null })),
+      activeFolderId: state.activeFolderId ?? null,
+      sort: state.sort || 'relevance'
+    };
+    localStorage.setItem(LS_KEY, JSON.stringify(minimal));
+  }catch{}
+}
+
+  // Load on startup, save on unload
+  hydrateStateFromLocal();
+  window.addEventListener('beforeunload', saveStateToLocal);
+
+function renderLibrary(){
+  renderLeftDock();
+  renderCrumbs();
+
+  const list = $m('#ingestList');
+  list.innerHTML = '';
+
+  // — FOLDERS SECTION (only folders inside the current folder)
+  const currentParent = state.activeFolderId || null;
+  const subfolders = state.folders.filter(f => (f.parentId ?? null) === currentParent);
+
+  if (subfolders.length){
+    const h = document.createElement('div');
+    h.className = 'muted';
+    h.style.cssText = 'font-size:11px; text-transform:uppercase; letter-spacing:.06em; margin:2px 4px;';
+    h.textContent = 'Folders';
+    list.appendChild(h);
+
+    for (const f of subfolders){
+      const row = document.createElement('div');
+      const active = state.activeFolderId === f.id;
+      row.className = 'mini-item' + (active ? ' sel' : '');
+      row.setAttribute('data-folder-id', f.id);
+
+      row.innerHTML = `
+        <div style="flex:1;">
+          <div style="font-weight:700">${escapeHtml(f.name)}</div>
+          <div class="muted" style="font-size:12px">${countDocsInFolder(f.id)} item(s)</div>
+        </div>
+        <div class="row-actions">
+          <button class="icon-btn icon-edit" data-act="f-rename" data-id="${f.id}" title="Rename" aria-label="Rename">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+          </button>
+          <button class="icon-btn icon-del" data-act="f-del" data-id="${f.id}" title="Delete" aria-label="Delete">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
+          </button>
+        </div>
+        <span class="tag">FOLDER</span>
+      `;
+
+      // click to enter
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('.row-actions')) return;
+        setActiveFolder(f.id);
+      });
+
+      // Make folder row draggable to move it under another folder
+      row.setAttribute('draggable', 'true');
+      row.addEventListener('dragstart', (e)=>{
+        e.dataTransfer.setData('application/json', JSON.stringify({ kind:'folder', id: f.id }));
+      });
+
+      // ---- DnD: allow dropping a file onto this folder ----
+      row.addEventListener('dragover', (e)=>{ e.preventDefault(); row.classList.add('sel'); });
+      row.addEventListener('dragleave', ()=> row.classList.remove('sel'));
+      row.addEventListener('drop', (e)=>{
+        e.preventDefault(); row.classList.remove('sel');
+        try{
+          const payload = JSON.parse(e.dataTransfer.getData('application/json') || '{}');
+          // Move DOCs into this folder
+          if (payload?.kind === 'doc' && payload.id){
+            const d = state.byId.get(payload.id);
+            if (d){ d.folderId = f.id; saveStateToLocal(); renderLibrary(); refreshSearch(); }
+          }
+          // Optional: Allow moving a FOLDER into this folder (re-nesting)
+          else if (payload?.kind === 'folder' && payload.id && payload.id !== f.id){
+            if (!isAncestor(f.id, payload.id)){ // prevent cycles
+              const moving = state.folders.find(x => x.id === payload.id);
+              if (moving){ moving.parentId = f.id; saveStateToLocal(); renderLibrary(); }
+            } else {
+              alert('Cannot move a folder into its own descendant.');
+            }
+          }
+        }catch{}
+      });
+
+      list.appendChild(row);
+    }
+  }
+
+  // small divider
+  const divider = document.createElement('div');
+  divider.style.cssText = 'height:8px';
+  list.appendChild(divider);
+
+  // — FILES SECTION (filtered by active folder)
+  const fid = state.activeFolderId;
+  const items = [...state.docs]
+    .filter(d => (fid ? d.folderId === fid : d.folderId == null)) // root shows only root files
+    .sort((a,b)=> b.ts - a.ts);
+
+  for (const d of items){
+    const row = document.createElement('div');
+    row.className = 'mini-item selectable' + (state.selectedIds.has(d.id) ? ' sel' : '');
+    row.dataset.id = d.id;
+
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.row-actions')) return;
+      if (!state.selectMode) return;
+      toggleDocSelection(d.id);
+    });
+
+    const name = escapeHtml(d.title || 'Untitled');
+    const metaLine = formatMetaLine(d);
+
+    row.innerHTML = `
+      <div style="flex:1;">
+        <div style="font-weight:700">${name}</div>
+        <div class="muted" style="font-size:12px">${metaLine}</div>
+      </div>
+      <div class="row-actions">
+        <button class="icon-btn icon-edit" data-act="edit" data-id="${d.id}" title="Edit" aria-label="Edit">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+        </button>
+        <button class="icon-btn icon-del" data-act="del" data-id="${d.id}" title="Delete" aria-label="Delete">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
+        </button>
+      </div>
+      <span class="tag">${(d.type||'note').toUpperCase()}</span>
+    `;
+
+    // Make the file row draggable
+    row.setAttribute('draggable', 'true');
+    row.addEventListener('dragstart', (e)=>{
+      e.dataTransfer.setData('application/json', JSON.stringify({ kind:'doc', id: d.id }));
+      // optional: a subtle drag image
+      try{
+        const img = document.createElement('canvas'); img.width = img.height = 1;
+        e.dataTransfer.setDragImage(img, 0, 0);
+      }catch{}
+    });
+
+    list.appendChild(row);
+  }
+
+  // handlers
+  list.querySelectorAll('button[data-act="edit"]').forEach(b => {
+    b.onclick = (ev) => { ev.stopPropagation(); beginEdit(b.dataset.id); };
+  });
+  list.querySelectorAll('button[data-act="del"]').forEach(b => {
+    b.onclick = (ev) => { ev.stopPropagation(); deleteDoc(b.dataset.id); };
+  });
+  list.querySelectorAll('button[data-act="f-rename"]').forEach(b => {
+    b.onclick = (ev) => {
+      ev.stopPropagation();
+      const f = state.folders.find(x => x.id === b.dataset.id);
+      if (!f) return;
+      const name = prompt('Rename folder:', f.name)?.trim();
+      if (!name) return;
+      f.name = name;
+      saveStateToLocal();
+      renderCrumbs();
+      renderLibrary();
+    };
+  });
+  list.querySelectorAll('button[data-act="f-del"]').forEach(b => {
+    b.onclick = (ev) => {
+      ev.stopPropagation();
+      const id = b.dataset.id;
+      if (!confirm('Delete this folder? Files inside will become uncategorized (All Files).')) return;
+      // move files out of folder
+      state.docs.forEach(d => { if (d.folderId === id) d.folderId = null; });
+      // delete folder
+      state.folders = state.folders.filter(f => f.id !== id);
+      if (state.activeFolderId === id) state.activeFolderId = null;
+      saveStateToLocal();
+      renderCrumbs();
+      renderLibrary();
+      refreshSearch();
+    };
+  });
+}
+
+function countDocsInFolder(fid){
+  return state.docs.reduce((n,d)=> n + (d.folderId === fid ? 1 : 0), 0);
+}
+
+// helper: plain text → safe HTML (keep newlines)
+function textToHtml(s){
+  const esc = (s||'')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return esc.replace(/\r\n|\n/g, '<br>');
+}
+
+function toggleDocSelection(id){
+  if (!id) return;
+  if (state.selectedIds.has(id)) state.selectedIds.delete(id);
+  else state.selectedIds.add(id);
+  // repaint row state and pills count
+  const row = document.querySelector(`.mini-item[data-id="${CSS.escape(id)}"]`);
+  if (row) row.classList.toggle('sel', state.selectedIds.has(id));
+  renderLeftDock();
+  refreshSearch();
+}
+
+function setActiveFolder(id){
+  state.activeFolderId = id || null; // null = All Files
+  renderCrumbs();
+  renderLibrary();
+  refreshSearch();
+  saveStateToLocal();
+}
+
+function renderCrumbs(){
+  const host = document.getElementById('crumbs');
+  if (!host) return;
+
+  const chain = [];
+  let cur = state.folders.find(x => x.id === state.activeFolderId) || null;
+  while (cur){
+    chain.push(cur);
+    cur = cur.parentId ? state.folders.find(x => x.id === cur.parentId) || null : null;
+  }
+  chain.reverse(); // root → active
+
+  let html = `<a href="#" data-fid="" style="color:inherit; text-decoration:none; opacity:.7">All Files</a>`;
+  for (const f of chain){
+    html += ` <span style="opacity:.5">/</span> <a href="#" data-fid="${f.id}" style="color:inherit; text-decoration:none;">${escapeHtml(f.name)}</a>`;
+  }
+  host.innerHTML = html;
+
+  host.querySelectorAll('a[data-fid]').forEach(a => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      const fid = a.getAttribute('data-fid') || null;
+      setActiveFolder(fid);
+    });
+  });
+
+  // Allow dropping a dragged file onto “All Files” to move it to root
+  host.querySelector('a[data-fid=""]')?.addEventListener('dragover', (e)=>{ e.preventDefault(); });
+  host.querySelector('a[data-fid=""]')?.addEventListener('drop', (e)=>{
+    e.preventDefault();
+    try {
+      const payload = JSON.parse(e.dataTransfer.getData('application/json')||'{}');
+      if (payload?.kind === 'doc' && payload.id){
+        const d = state.byId.get(payload.id);
+        if (d){ d.folderId = null; saveStateToLocal(); renderLibrary(); refreshSearch(); }
+      }
+    } catch {}
+  });
+}
+
+async function handleFiles(fileList){
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+
+  const now = Date.now();
+  const additions = [];
+
+  for (const f of files){
+    try{
+      const e = (typeof extOf === 'function' ? extOf(f.name) : (f.name.split('.').pop()||'').toLowerCase());
+      const type = ['png','jpg','jpeg','webp','gif','bmp','tif','tiff'].includes(e) ? 'img'
+                 : (e === 'pdf' ? 'pdf' : 'txt');
+
+      let text = '';
+      if (type === 'txt'){
+        try { text = await f.text(); } catch {}
+      } else if (type === 'pdf'){
+        try { text = await extractPdfText(f); } catch {}
+      } else {
+        text = f.name.replace(/[_-]/g,' ').replace(/\.[^.]+$/,'');
+      }
+
+      const html = textToHtml(text);
+
+      additions.push({
+        id: uid(),
+        type,
+        title: f.name,
+        text,
+        html,
+        meta: { name: f.name, size: f.size, mime: f.type || '' },
+        folderId: state.activeFolderId || null,
+        ts: now
+      });
+    } catch(err){
+      console.error('File ingest error', err);
+    }
+  }
+
+  // Local add + persist
+  additions.forEach(d => { state.docs.push(d); state.byId.set(d.id, d); });
+  try { renderLibrary?.(); refreshSearch?.(); } catch {}
+  saveStateToLocal();
+}
+
+  async function extractPdfText(file){
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    let full = '';
+    const n = pdf.numPages;
+    for(let i=1;i<=n;i++){
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      const strings = content.items.map(it => typeof it.str === 'string' ? it.str : '').filter(Boolean);
+      full += strings.join(' ') + '\n';
+    }
+    return full;
+  }
+
+  // ===== Notes (Add/Edit/Delete) =====
+  const noteModal = $m('#noteModal');
+  $m('#addNoteBtn').onclick = () => { $m('#editingId').value=''; $m('#noteTitle').value=''; $m('#noteEditor').innerHTML=''; noteModal.showModal(); };
+  $m('#closeNote').onclick = () => noteModal.close();
+  $m('#saveNote').onclick  = () => saveNote();
+
+function beginEdit(id){
+  const d = state.byId.get(id); if(!d) return;
+
+  // Stash id
+  $m('#editingId').value = id;
+
+  // Title = filename (or prior title), Content = converted text (or existing html/text)
+  $m('#noteTitle').value = d.title || 'Untitled';
+  const editorEl = $m('#noteEditor');
+    if (editorEl){
+    if (d.html && d.html.trim()){
+        editorEl.innerHTML = d.html;
+    } else {
+        // derive minimal HTML from text if html missing
+        editorEl.innerHTML = textToHtml(d.text || '');
+    }
+    }
+
+  // Update modal head to reflect file type
+  try{
+    const headBlock = $m('#noteModal .modal-head > div'); // the left-side <div> with title+subtitle
+    if (headBlock){
+      const [titleEl, subEl] = headBlock.children || [];
+      if (titleEl) titleEl.textContent = d.title || 'Untitled';
+      if (subEl)   subEl.textContent   = `${(d.type||'note').toUpperCase()} • Edit title and content, then Save`;
+    }
+  }catch{}
+
+  noteModal.showModal();
+}
+
+async function saveNote(){
+  const idEl  = document.querySelector('#editingId');
+  const id    = idEl ? idEl.value.trim() : '';
+  const title = (document.querySelector('#noteTitle')?.value || '').trim() || 'Untitled';
+  const editor = document.querySelector('#noteEditor');
+  const html  = (editor?.innerHTML || '').trim();
+  const text  = (editor?.innerText || '').trim();
+  const now   = Date.now();
+
+  if (!id) {
+    // create
+    const doc = {
+      id: uid(),
+      type: 'note',
+      title, text, html,
+      meta: { name: title },
+      folderId: state.activeFolderId || null,
+      ts: now
+    };
+    state.docs.push(doc);
+    state.byId.set(doc.id, doc);
+  } else {
+    // edit existing
+    const d = state.byId.get(id);
+    if (!d) return;
+    d.title = title;
+    d.text  = text;
+    d.html  = html;
+    d.ts    = now;
+    state.byId.set(d.id, d);
+  }
+
+  try { renderLibrary?.(); refreshSearch?.(); } catch {}
+  saveStateToLocal();
+
+  if (idEl) idEl.value = '';
+  document.querySelector('#noteModal')?.close();
+}
+
+// REPLACE your localWrite with this version (accepts payload)
+function localWrite({ id, title, text, html } = {}){
+  const now = Date.now();
+  if (!window.state) window.state = { docs: [], byId: new Map(), sort: 'relevance' };
+
+  if (id) {
+    // edit existing
+    const d = (state.byId && state.byId.get) ? state.byId.get(id) : state.docs.find(x=>x.id===id);
+    if (!d) return;
+    d.title = title;
+    d.text  = text;
+    d.html  = html;                 // keep bullets/formatting
+    d.meta  = { name: title };
+    d.ts    = now;
+  } else {
+    // create new
+    const doc = {
+      id: (typeof uid === 'function' ? uid() : crypto.randomUUID()),
+      type: 'note',
+      title, text, html,
+      meta: { name: title },
+      folderId: state.activeFolderId || null,
+      ts: now
+    };
+    state.docs.push(doc);
+    state.byId?.set?.(doc.id, doc);
+  }
+
+  // refresh UI
+  try { renderLibrary?.(); } catch {}
+  try { refreshSearch?.(); } catch {}
+}
+
+    function safeRefresh(){
+      if (typeof renderLibrary === 'function') renderLibrary();
+      if (typeof refreshSearch === 'function') refreshSearch();
+    }
+
+function deleteDoc(id){
+  if(!id) return;
+  const idx = state.docs.findIndex(d => d.id === id);
+  if (idx >= 0) state.docs.splice(idx, 1);
+  state.byId.delete(id);
+  try { renderLibrary?.(); refreshSearch?.(); } catch {}
+  saveStateToLocal();
+}
+
+// ===== Search Engine =====
+const input     = $m('#q');
+const filterSel = $m('#filter');   // type filter (unchanged)
+const modeSel   = $m('#mode');     // search mode
+const winSel    = $m('#win');      // proximity window
+const cards     = $m('#cards');
+
+input.addEventListener('input', debounced(refreshSearch, 70));
+[filterSel, modeSel, winSel].forEach(el => el && el.addEventListener('change', refreshSearch));
+
+  function scoreKeyword(doc, terms){
+    const text = (doc.title + '\n' + doc.text).toLowerCase();
+    let score = 0;
+    for(const t of terms){
+      if(!t) continue;
+      const term = t.toLowerCase();
+      const tf = (text.match(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'g')) || []).length;
+      if(!tf) continue;
+      const idf = 1 + Math.log( 1 + (state.docs.length / (1 + df(term))) );
+      const pos = text.indexOf(term);
+      const posBonus = pos >= 0 ? (1.2 - Math.min(1.1, pos/text.length)) : 1;
+      score += tf * idf * posBonus;
+    }
+    return score;
+  }
+  function df(term){
+    const t = term.toLowerCase();
+    let c=0;
+    for(const d of state.docs){
+      const text = (d.title + '\n' + d.text).toLowerCase();
+      if(text.includes(t)) c++;
+    }
+    return c;
+  }
+
+  function tokenizeKeyword(q){ return q.trim().split(/\s+/).filter(Boolean) }
+
+function parseBoolean(q){
+  const tokens = q.match(/"[^"]+"|\S+/g) || [];
+  if(!tokens.length){ return { pred: ()=>true, displayTokens: [] }; }
+  const toTerm = tok => {
+    if(tok.startsWith('"') && tok.endsWith('"')){
+      const phrase = tok.slice(1,-1).toLowerCase();
+      return {fn: doc => (doc.text||'').toLowerCase().includes(phrase), token: phrase};
+    }
+    const t = tok.toLowerCase();
+    return {fn: doc => (doc.text||'').toLowerCase().includes(t), token: t};
+  };
+  const out=[]; const ops=[]; const prec = { NOT:3, AND:2, OR:1 };
+  const termsForHighlight=[];
+  for(const raw of tokens){
+    const up = raw.toUpperCase();
+    if(['AND','OR','NOT'].includes(up)){
+      while(ops.length && prec[ops.at(-1)]>=prec[up]) out.push(ops.pop());
+      ops.push(up);
+    }else{ const t = toTerm(raw); out.push(t); termsForHighlight.push(t.token); }
+  }
+  while(ops.length) out.push(ops.pop());
+  const pred = doc =>{
+    const stack=[];
+    for(const item of out){
+      if(typeof item==='string'){
+        if(item==='NOT'){ const a = stack.pop(); stack.push( d => !a(d) ); }
+        else if(item==='AND'){ const b=stack.pop(), a=stack.pop(); stack.push( d => a(d) && b(d) ); }
+        else if(item==='OR'){ const b=stack.pop(), a=stack.pop(); stack.push( d => a(d) || b(d) ); }
+      }else{ stack.push(item.fn); }
+    }
+    return stack[0]?.(doc) ?? true;
+  };
+  return { pred, displayTokens: termsForHighlight };
+}
+
+function refreshSearch(){
+  const q = input.value.trim();
+  const typeFilter = filterSel?.value || 'all';
+  const mode = modeSel?.value || 'cluster';
+  const win  = parseInt(winSel?.value || '120', 10);
+
+  const hits = [];
+  if(!q){
+    cards.innerHTML = '';
+    mountCounterInSearchBar('');
+    return;
+  }
+
+  // If any files are selected, restrict the corpus
+  const restrictTo = (state.selectedIds && state.selectedIds.size > 0) ? state.selectedIds : null;
+
+  for(const d of state.docs){
+    if (restrictTo && !restrictTo.has(d.id)) continue;    // ← selection filter
+    if (typeFilter!=='all' && d.type!==typeFilter) continue;
+
+    const text = d.text || '';
+
+    if(mode === 'phrase'){
+      const re = safeRe(q,'gi'); let m;
+      while((m = re.exec(text))){
+        hits.push({doc:d, idx:m.index, len:m[0].length, tokens:[q], score:1});
+        if(hits.length>2000) break;
+      }
+    }else if(mode === 'boolean'){
+      const { pred, displayTokens } = parseBoolean(q);
+      if(pred(d)){
+        if(displayTokens.length){
+          for(const t of displayTokens){
+            const arr = findAllIndices(text, t);
+            for(const h of arr){
+              hits.push({doc:d, idx:h.idx, len:h.len, tokens:displayTokens, score:1});
+              if(hits.length>2000) break;
+            }
+            if(hits.length>2000) break;
+          }
+        }else{
+          hits.push({doc:d, idx:-1, len:0, tokens:[], score:1});
+        }
+      }
+    }else{ // cluster (all words near)
+      const terms = tokenize(q);
+      const spans = clusterSpans(text, terms, win);
+      for(const s of spans){
+        hits.push({
+          doc:d,
+          idx:s.start,
+          len:s.end - s.start,
+          tokens:terms,
+          score: (s.end-s.start) ? 1/(s.end-s.start) : 1
+        });
+        if(hits.length>2000) break;
+      }
+    }
+    if(hits.length>2000) break;
+  }
+
+  if(state.sort==='newest')
+    hits.sort((a,b)=> (b.doc.ts||0)-(a.doc.ts||0) || a.idx-b.idx);
+  else if(state.sort==='oldest')
+    hits.sort((a,b)=> (a.doc.ts||0)-(b.doc.ts||0) || a.idx-b.idx);
+  else
+    hits.sort((a,b)=> b.score-a.score || a.idx-b.idx);
+
+  cards.innerHTML = '';
+  let count = 0;
+
+  const queryTokens =
+    mode === 'phrase'  ? [q] :
+    mode === 'boolean' ? parseBoolean(q).displayTokens :
+    tokenize(q);
+
+  for (const h of hits){
+    const d = h.doc;
+    const snippetRaw = h.idx>=0
+      ? snippetAt(d.text||'', h.idx, h.len, 80)
+      : (d.text||'').slice(0,160) + ((d.text||'').length>160?'…':'');
+    const snippet = highlight(snippetRaw, h.tokens);
+
+    const titleLine = document.createElement('div');
+    titleLine.className = 'result-titleline';
+    titleLine.textContent = d.title || 'Untitled';
+
+    const el = document.createElement('article');
+    el.className = 'result-card';
+    el.innerHTML = `<div class="snippet">${snippet}</div>`;
+    el.addEventListener('click', () =>
+      openViewerRange({ docId: d.id, start: h.idx, len: h.len, tokens: queryTokens, mode: 'cluster' })
+    );
+
+    cards.appendChild(titleLine);
+    cards.appendChild(el);
+    count++;
+  }
+
+  const label = `${count} result${count===1?'':'s'}`;
+  mountCounterInSearchBar(label);
+}
+
+const viewer      = $m('#viewerModal');
+const viewerBody  = $m('#viewerBody');
+const viewerTitle = $m('#viewerTitle');
+let viewerCursor  = 0;
+
+$m('#closeViewer').onclick = () => viewer.close();
+$m('#prevHit').onclick     = () => jumpHit(-1);
+$m('#nextHit').onclick     = () => jumpHit(1);
+
+  function openViewer(docId, absoluteIdx, tokens){
+    const d = state.byId?.get?.(docId) || state.docs.find(x=>x.id===docId);
+    if(!d) return;
+    const body = d.text || '';
+    viewerTitle.textContent = d.title || 'Preview';
+
+    const arr = Array.isArray(tokens)? tokens.filter(Boolean) : (tokens?[tokens]:[]);
+    const re = arr.length ? new RegExp('(' + arr.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'ig') : null;
+
+    let html=''; let last=0, k=0, clickedK=0;
+    if(re){
+      let m;
+      while((m=re.exec(body))){
+        const i=m.index, tx=m[0];
+        html += escapeHtml(body.slice(last, i));
+        const isClicked = (absoluteIdx >= 0 && i === absoluteIdx);
+        html += `<mark data-i="${k}"${isClicked?' id="hit-current"':''}>${escapeHtml(tx)}</mark>`;
+        if(isClicked) clickedK=k;
+        last = i + tx.length; k++;
+        if(k>2000) break;
+      }
+      html += escapeHtml(body.slice(last));
+    }else{
+      html = escapeHtml(body);
+    }
+
+    viewerBody.innerHTML = html;
+    viewer.showModal();
+
+    setTimeout(()=>{
+      const marks = Array.from(viewerBody.querySelectorAll('mark'));
+      window.viewerCursor = Math.min(clickedK, Math.max(0, marks.length-1));
+      const target = marks[window.viewerCursor] || null;
+      if(target){ target.scrollIntoView({behavior:'instant', block:'center'}); pulse(target); }
+    }, 0);
+  }
+
+function openViewerRange({ docId, start, len, tokens = [], mode = 'cluster' }){
+  const d = (state.byId?.get?.(docId)) || state.docs.find(x=>x.id===docId);
+  if(!d) return;
+  const body = (d.text || '');
+  viewerTitle.textContent = d.title || 'Preview';
+
+  const win = parseInt((window.winSel?.value || '120'), 10);
+  const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const union = tokens?.length ? new RegExp('(' + tokens.map(esc).join('|') + ')','gi') : null;
+
+  let html = '';
+  let last = 0;
+
+  // default nav = per-mark
+  window.viewerMode = mode;
+  window.viewerClusters = [];
+  window.viewerClusterIdx = 0;
+
+  if (mode === 'cluster' && tokens?.length) {
+    // compute ALL cluster windows for this note
+    const spans = clusterSpans(body, tokens, win);  // [{start,end}] compact, non-overlapping
+    // figure clicked span
+    const clickedEnd = (typeof len === 'number' && len > 0) ? start + len : start;
+    const clicked = spans.find(s => start >= s.start && start < s.end)
+                || spans.find(s => s.start === start && s.end === clickedEnd) || null;
+
+    for (let ci = 0; ci < spans.length; ci++){
+      const s = spans[ci];
+
+      // outside text before this cluster
+      if (s.start > last) html += escapeHtml(body.slice(last, s.start));
+
+      // build inner HTML for this cluster: highlight tokens only inside [s.start, s.end)
+      let inner = '';
+      let innerLast = s.start;
+      if (union) {
+        union.lastIndex = s.start;
+        let m;
+        while ((m = union.exec(body)) && m.index < s.end){
+          const i = m.index, tx = m[0];
+          if (i > innerLast) inner += escapeHtml(body.slice(innerLast, i));
+          inner += `<mark>${escapeHtml(tx)}</mark>`;
+          innerLast = i + tx.length;
+          if (innerLast >= s.end) break;
+        }
+      }
+      // tail of the cluster
+      if (s.end > innerLast) inner += escapeHtml(body.slice(innerLast, s.end));
+
+      const isClicked = clicked && s.start === clicked.start && s.end === clicked.end;
+      html += `<span class="cluster" data-c="${ci}"${isClicked ? ' id="cluster-current"' : ''}>${inner}</span>`;
+
+      last = s.end;
+    }
+
+    // text after last cluster
+    if (body.length > last) html += escapeHtml(body.slice(last));
+
+  } else {
+    // phrase/boolean/global fallback: just highlight all matches (per-mark nav)
+    if (!union) {
+      html = escapeHtml(body);
+    } else {
+      let m, kLast = 0;
+      while ((m = union.exec(body))){
+        const i = m.index, tx = m[0];
+        html += escapeHtml(body.slice(kLast, i));
+        html += `<mark>${escapeHtml(tx)}</mark>`;
+        kLast = i + tx.length;
+      }
+      html += escapeHtml(body.slice(kLast));
+    }
+  }
+
+  viewerBody.innerHTML = html;
+  viewer.showModal();
+
+  // prepare nav set
+  setTimeout(()=>{
+    if (mode === 'cluster') {
+      window.viewerClusters = Array.from(viewerBody.querySelectorAll('.cluster'));
+      // place focus on clicked cluster or the first
+      window.viewerClusterIdx = Math.max(0,
+        window.viewerClusters.findIndex(el => el.id === 'cluster-current'));
+      if (window.viewerClusterIdx < 0) window.viewerClusterIdx = 0;
+      focusCluster(window.viewerClusterIdx);
+    } else {
+      // legacy per-mark
+      const marks = Array.from(viewerBody.querySelectorAll('mark'));
+      window.viewerCursor = Math.max(0, marks.findIndex(el => el.id === 'hit-current'));
+      if (!Number.isFinite(window.viewerCursor) || window.viewerCursor < 0) window.viewerCursor = 0;
+      const t = marks[window.viewerCursor]; if (t){ t.scrollIntoView({behavior:'instant', block:'center'}); pulse(t); }
+    }
+  }, 0);
+}
+
+function focusCluster(i){
+  const arr = window.viewerClusters || [];
+  if (!arr.length) return;
+  // clear current id
+  arr.forEach(el => { if (el.id === 'cluster-current') el.id = ''; });
+  const el = arr[(i + arr.length) % arr.length];
+  if (!el) return;
+  el.id = 'cluster-current';
+  el.scrollIntoView({ behavior:'smooth', block:'center' });
+  pulse(el);
+}
+
+function jumpHit(dir){
+  if (window.viewerMode === 'cluster' && (window.viewerClusters?.length > 0)){
+    const n = window.viewerClusters.length;
+    window.viewerClusterIdx = (window.viewerClusterIdx + dir + n) % n;
+    focusCluster(window.viewerClusterIdx);
+    return;
+  }
+
+  // fallback: per-mark nav (phrase/boolean/global)
+  const marks = Array.from(viewerBody.querySelectorAll('mark'));
+  if(!marks.length) return;
+  viewerCursor = (viewerCursor + dir + marks.length) % marks.length;
+  marks[viewerCursor].scrollIntoView({behavior:'smooth', block:'center'});
+  pulse(marks[viewerCursor]);
+}
+
+function pulse(el){
+  el.animate(
+    [
+      { outline:'2px solid rgba(10,132,255,0)', borderRadius:'4px' },
+      { outline:'2px solid rgba(10,132,255,0.9)', borderRadius:'4px' },
+      { outline:'2px solid rgba(10,132,255,0)', borderRadius:'4px' }
+    ],
+    {
+      duration: 800,       // slower glow
+      easing: 'ease-in-out'
+    }
+  );
+}
+
+  // ===== Shortcuts =====
+  document.addEventListener('keydown', (e)=>{
+    if((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==='k'){
+      e.preventDefault(); input.focus(); input.select();
+    }
+  });
+
+// Initial
+document.addEventListener('DOMContentLoaded', () => {
+  hydrateStateFromLocal();
+  renderLibrary();
+  refreshSearch();
+  saveStateToLocal();   // safe after hydrate + render
+
+  const headerNewFolderBtn = document.getElementById('newFolderBtn');
+  if (headerNewFolderBtn) {
+    headerNewFolderBtn.onclick = () => {
+      const name = prompt('Folder name?')?.trim();
+      if (!name) return;
+      const id = uid();
+      state.folders.push({ id, name, parentId: state.activeFolderId || null });
+      saveStateToLocal();
+      setActiveFolder(id); // jumps into the new folder
+    };
+  }
+});
+
+</script>
+
+</body>
+</html>
