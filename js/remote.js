@@ -158,9 +158,20 @@ export function looksLikeDocument(url, type) {
 }
 
 /** All links to readable documents on a web page, with their link text. */
+// Text written right after a link, up to the next block or list ("(PDF) (effective 7/9/2026)").
+function textAfter(a) {
+  let out = '';
+  for (let n = a.nextSibling; n && out.length < 160; n = n.nextSibling) {
+    if (n.nodeType === 1 && /^(UL|OL|LI|DIV|P|BR|TABLE|H\d|A)$/.test(n.nodeName)) break;
+    out += n.textContent || '';
+  }
+  return out.replace(/\s+/g, ' ').trim();
+}
+
+/** All links to readable documents on a web page, with their link text, date note and nesting. */
 export function documentLinks(html, baseUrl) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
-  const seen = new Set();
+  const seen = new Map();
   const out = [];
   for (const a of doc.querySelectorAll('a[href]')) {
     let url;
@@ -171,16 +182,57 @@ export function documentLinks(html, baseUrl) {
     if (!k || k === 'html') continue;
     const href = url.toString();
     if (seen.has(href)) continue;
-    seen.add(href);
     const text = (a.textContent || '').replace(/\s+/g, ' ').trim();
+    const after = textAfter(a);
     // the size the page itself shows next to the link, if any ("22 MB")
-    const around = (a.parentElement?.textContent || '').replace(/\s+/g, ' ');
-    const m = around.match(/(\d+(?:\.\d+)?)\s*(KB|MB|GB)\b/i);
+    const m = after.match(/(\d+(?:\.\d+)?)\s*(KB|MB|GB)\b/i);
     const shownSize = m ? Math.round(Number(m[1]) * { KB: 1024, MB: 1048576, GB: 1073741824 }[m[2].toUpperCase()]) : 0;
-    out.push({ url: href, text: text || fileNameFor(href), shownSize });
+    const eff = after.match(/(effective|dated?|updated|published|revised)[:\s]*([0-9]{1,2}\/[0-9]{1,2}\/[0-9]{2,4}|[A-Z][a-z]+ \d{1,2},? \d{4}|[A-Z][a-z]+ \d{4})/i);
+    const note = eff ? `${eff[1].toLowerCase()} ${eff[2]}` : '';
+    // a link inside a sub-list under another document link is a part of that document
+    let parent = null;
+    const li = a.closest('li');
+    const outerLi = li?.parentElement?.closest('li');
+    if (outerLi) {
+      const first = [...outerLi.querySelectorAll('a[href]')].find((x) => !li.contains(x) && seen.has(new URL(x.getAttribute('href'), baseUrl).toString().replace(/#.*$/, '')));
+      if (first) parent = new URL(first.getAttribute('href'), baseUrl).toString().replace(/#.*$/, '');
+    }
+    const item = { url: href, text: text || fileNameFor(href), shownSize, note, parent };
+    seen.set(href, item);
+    out.push(item);
   }
   return { links: out, title: (doc.querySelector('title')?.textContent || '').replace(/\s+/g, ' ').trim() };
 }
+
+// ---- recognising the same document after the site renames it ----
+const STOP = new Set(['the', 'of', 'and', 'a', 'an', 'for', 'to', 'in', 'on', 'with', 'w', 'pdf', 'html', 'dtd', 'dated', 'final', 'rev', 'version', 'v', 'copy']);
+function tokens(s, dropNumbers) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/\.[a-z0-9]{2,5}$/, '')
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t && !STOP.has(t) && !(dropNumbers && /^\d+$/.test(t)));
+}
+function jaccard(a, b) {
+  const A = new Set(a);
+  const B = new Set(b);
+  if (!A.size || !B.size) return 0;
+  let n = 0;
+  for (const x of A) if (B.has(x)) n++;
+  return n / (A.size + B.size - n);
+}
+/**
+ * How likely two links are the same document under different names (0–1+).
+ * Link titles count most, then the file name without its dates/numbers, then how close the sizes are.
+ */
+export function linkSimilarity(a, b) {
+  const text = jaccard(tokens(a.text), tokens(b.text));
+  const file = jaccard(tokens(fileNameFor(a.url), true), tokens(fileNameFor(b.url), true));
+  let score = 0.65 * text + 0.35 * file;
+  if (a.size && b.size) score += 0.15 * (Math.min(a.size, b.size) / Math.max(a.size, b.size)) - 0.05;
+  return score;
+}
+export const SAME_DOC_SCORE = 0.42;
 
 /** "faa-h-8083-25c.pdf" and "FAA-H-8083-25D.pdf" are editions of the same thing. */
 export function editionKey(name) {

@@ -741,3 +741,12 @@ dialog[open] { animation: dlg 0.2s ease-out; }
 #checkAllBtn.spin svg { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .fresh-tag { color: #2f9e44; font-weight: 600; }
+
+.review { overflow-x: hidden; }
+.rtext, .rtext b, .rtext span { overflow-wrap: anywhere; min-width: 0; }
+.review-bulk { display: flex; align-items: center; gap: 6px; margin: -6px 0 4px; font-size: 12.5px; }
+.review-bulk .link { font-size: 13px; padding: 4px 8px; }
+.review-list h4 { display: flex; align-items: center; gap: 8px; }
+.sec-bulk { display: inline-flex; gap: 2px; margin-left: auto; text-transform: none; letter-spacing: 0; }
+.sec-bulk button { font-size: 11.5px; font-weight: 600; color: var(--accent); padding: 2px 6px; border-radius: 6px; }
+.sec-bulk button:hover { background: var(--accent-soft); }

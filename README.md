@@ -30,7 +30,7 @@ You can add a document straight from a link, or link a whole page that lists doc
 - **▾ next to Add documents → Add from a web link…** Paste a link to a PDF (or other document) to add it. Paste a link to a page that lists documents and you get a checklist of everything on it. Pages like the FAA's list the whole handbook *and* each chapter; the whole-book file is unticked automatically so you don't get every hit twice.
 - The folder stays **linked to that page**. **Check for updates** (the ↻ button next to *Library*, or a folder's ⋯ menu) then:
   - re-downloads anything the site changed (it asks the site first, so unchanged files aren't downloaded again),
-  - notices when a file was replaced by a new edition with a new name (e.g. `…-25c.pdf` → `…-25d.pdf`, or the same link title),
+  - recognises a document the site re-published under a new file name and title (e.g. `aim_basic_w_chg1_chg2_and_chg3_dtd_7_9_26….pdf` → `aim_basic_w_chg1_dtd_2_18_27.pdf`) by comparing link titles, file names without their dates, and sizes, then shows you the pairing before replacing,
   - offers documents newly added to the page (untick ones you don't want and they won't be suggested again),
   - lists documents that disappeared from the page (they stay in your library).
 - **Sanity checks:** before replacing anything it compares page counts and file sizes. A new version with far fewer pages or a much smaller file (an error page, a single chapter instead of a book…) is flagged and left unticked for you to decide.

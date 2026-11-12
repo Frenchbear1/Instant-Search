@@ -3,7 +3,7 @@ import { store } from './store.js';
 import { readFile, kindOf, ACCEPT } from './ingest.js';
 import { getPdf, closePdf, renderPdfPage, EXTRACTOR_VERSION } from './pdf.js';
 import { renderHtmlPage, forgetHtml } from './htmlview.js';
-import { remoteFetch, remoteInfo, remoteChanged, download, documentLinks, looksLikeDocument, fileNameFor, editionKey, linkKey, helper, NeedsHelper } from './remote.js';
+import { remoteFetch, remoteInfo, remoteChanged, download, documentLinks, looksLikeDocument, fileNameFor, editionKey, linkKey, linkSimilarity, SAME_DOC_SCORE, helper, NeedsHelper } from './remote.js';
 import { comboFromEvent, comboLabel, worksWhileTyping, isMac } from './keys.js';
 
 // ---------- small helpers ----------
@@ -1418,11 +1418,11 @@ function helperProblem(err) {
 }
 
 // Add one document from a link (download → read → save). Shows progress in the library.
-function addRemote(url, { folderId = null, linkText = '', info = null } = {}) {
+function addRemote(url, { folderId = null, linkText = '', note = '', info = null } = {}) {
   const name = linkText ? nameFromLink(linkText, url, info?.type) : fileNameFor(url, info?.type);
   const kind = kindOf(name) || 'html';
   const order = S.docs.reduce((m, d) => Math.max(m, d.order || 0), 0) + 1;
-  const meta = { id: uid(), name, kind, size: info?.size || 0, addedAt: Date.now(), order, enabled: true, status: 'indexing', phase: 'download', progress: 0, v: EXTRACTOR_VERSION, folderId, source: { url, linkText } };
+  const meta = { id: uid(), name, kind, size: info?.size || 0, addedAt: Date.now(), order, enabled: true, status: 'indexing', phase: 'download', progress: 0, v: EXTRACTOR_VERSION, folderId, source: { url, linkText, note } };
   S.docs.push(meta);
   renderLibrary();
   queue = queue.then(async () => {
@@ -1437,7 +1437,7 @@ function addRemote(url, { folderId = null, linkText = '', info = null } = {}) {
       meta.phase = 'read';
       meta.progress = 0;
       meta.size = dl.info.size;
-      meta.source = { url, linkText, etag: dl.info.etag, lastModified: dl.info.lastModified, size: dl.info.size, checkedAt: Date.now() };
+      meta.source = { url, linkText, note, etag: dl.info.etag, lastModified: dl.info.lastModified, size: dl.info.size, checkedAt: Date.now() };
       await ingest(new File([dl.bytes], meta.name, { type: dl.info.type || '' }), meta);
     } catch (err) {
       S.docs = S.docs.filter((d) => d !== meta);
@@ -1494,8 +1494,15 @@ function review({ title, intro = '', rows, options = [], apply = 'Apply', cancel
     const dlg = $('#reviewDlg');
     $('#reviewTitle').textContent = title;
     $('#reviewIntro').innerHTML = intro;
+    const boxes = rows.filter((r) => !r.header && !r.info).length;
+    $('#reviewBulk').hidden = boxes < 3;
     $('#reviewList').innerHTML = rows.map((r, i) => {
-      if (r.header) return `<h4>${esc(r.header)}</h4>`;
+      if (r.header) {
+        let n = 0;
+        for (let j = i + 1; j < rows.length && !rows[j].header; j++) if (!rows[j].info) n++;
+        const bulk = n >= 2 && boxes > n ? `<span class="sec-bulk"><button type="button" data-sec="all">All</button><button type="button" data-sec="none">None</button></span>` : '';
+        return `<h4>${esc(r.header)}${bulk}</h4>`;
+      }
       const body = `<span class="rtext"><b>${esc(r.title)}</b><span>${r.detail || ''}</span></span>`;
       if (r.info) return `<div class="rrow info ${r.tone || ''}">${body}</div>`;
       return `<label class="rrow ${r.tone || ''}"><input type="checkbox" data-i="${i}" ${r.checked ? 'checked' : ''}>${body}</label>`;
@@ -1515,6 +1522,29 @@ function review({ title, intro = '', rows, options = [], apply = 'Apply', cancel
       dlg.onclose = null;
       if (dlg.open) dlg.close();
       resolve(ok ? { picked, unpicked: rows.filter((r) => !r.header && !r.info && !picked.has(r)), options: opts } : null);
+    };
+    const count = () => {
+      const all = $$('#reviewList input');
+      const on = all.filter((x) => x.checked).length;
+      $('#reviewCount').textContent = all.length ? `${fmt(on)} of ${fmt(all.length)} selected` : '';
+    };
+    count();
+    $('#reviewList').onchange = count;
+    $('#reviewBulk').onclick = (e) => {
+      const b = e.target.closest('[data-all]');
+      if (!b) return;
+      $$('#reviewList input').forEach((x) => (x.checked = b.dataset.all === '1'));
+      count();
+    };
+    $('#reviewList').onclick = (e) => {
+      const b = e.target.closest('[data-sec]');
+      if (!b) return;
+      e.preventDefault();
+      for (let n = b.closest('h4').nextElementSibling; n && n.tagName !== 'H4'; n = n.nextElementSibling) {
+        const box = n.querySelector('input');
+        if (box) box.checked = b.dataset.sec === 'all';
+      }
+      count();
     };
     $('#reviewApply').onclick = () => finish(true);
     $('#reviewCancel').onclick = () => finish(false);
@@ -1635,6 +1665,8 @@ async function fillSizes(links) {
 
 // A page that lists both a whole book and its chapters: the book is about as big as everything else together.
 function looksLikeWholeBook(link, links) {
+  // when the page nests parts under a document, that document is the combined edition to keep
+  if (links.some((l) => l.parent === link.url) || link.parent) return false;
   if (links.length < 4 || !link.shownSize) return false;
   const others = links.filter((l) => l !== link).reduce((a, l) => a + (l.shownSize || 0), 0);
   return link.shownSize >= others * 0.55 || /full|complete|entire|whole/i.test(link.text);
@@ -1647,11 +1679,14 @@ async function pickFromPage(pageUrl, links, title, folderId) {
   const rows = [{ header: title || 'Documents on this page' }];
   for (const l of links) {
     const book = looksLikeWholeBook(l, links);
-    rows.push({ link: l, checked: !book, title: l.text, detail: `${fmtSize(l.shownSize) || 'size unknown'} · ${esc(fileNameFor(l.url))}${book ? ' · <b>looks like the whole book — the chapters below cover the same pages</b>' : ''}` });
+    const parent = l.parent && links.find((x) => x.url === l.parent);
+    const why = book ? ' · <b>looks like the whole book — the chapters below cover the same pages</b>'
+      : parent ? ` · <b>listed under “${esc(parent.text)}”, which already includes it</b>` : '';
+    rows.push({ link: l, checked: !book && !parent, title: l.text, detail: `${[fmtSize(l.shownSize) || 'size unknown', l.note && esc(l.note)].filter(Boolean).join(' · ')} · ${esc(fileNameFor(l.url))}${why}` });
   }
   const res = await review({
     title: 'Add documents from this page',
-    intro: 'Pick the documents to add. Pages like the FAA’s list the whole handbook <i>and</i> each chapter — choose one or the other so you don’t get every hit twice.',
+    intro: 'Pick the documents to add. Pages often list a whole book <i>and</i> its parts (chapters, or changes already included in a combined edition) — those parts start unticked so you don’t get every hit twice.',
     rows,
     options: [{ id: 'link', label: 'Keep the folder linked to this page, so “Check for updates” also finds new and replaced documents', checked: true }],
     apply: 'Add',
@@ -1666,7 +1701,7 @@ async function pickFromPage(pageUrl, links, title, folderId) {
     f.source = { url: pageUrl, title, ignored: rows.filter((r) => r.link && !res.picked.has(r)).map((r) => r.link.url), checkedAt: Date.now() };
     saveFolders();
   }
-  for (const r of picked) addRemote(r.link.url, { folderId: fid, linkText: r.link.text, info: { size: r.link.shownSize } });
+  for (const r of picked) addRemote(r.link.url, { folderId: fid, linkText: r.link.text, note: r.link.note, info: { size: r.link.shownSize } });
   renderLibrary();
 }
 
@@ -1709,12 +1744,30 @@ async function checkSources({ docIds = null, folderIds = null, quiet = false } =
           if ((f.source.ignored || []).includes(l.url)) continue;
           fresh.push(l);
         }
-        // a link that's new but has the same title or file (minus edition letter) as one that vanished = a new edition
+        // Sites often publish a new version under a new file name and a slightly different title
+        // ("…Basic with Change 1, 2 and 3" -> "…Basic with Change 1"). Pair each vanished document with the
+        // new link that looks most like it; the page-count/size check after downloading guards against mistakes.
+        const gone = inFolder.filter((x) => !matched.has(x) && !links.some((k) => k.url === x.source.url));
+        if (gone.length && fresh.length) await fillSizes(fresh);
+        const pairs = [];
+        for (const d of gone) {
+          for (const l of fresh) {
+            const exact = (d.source.linkText && linkKey(d.source.linkText) === linkKey(l.text)) || editionKey(fileNameFor(d.source.url)) === editionKey(fileNameFor(l.url));
+            const score = exact ? 2 : linkSimilarity({ text: d.source.linkText || d.name, url: d.source.url, size: d.size }, { text: l.text, url: l.url, size: l.shownSize });
+            if (score >= SAME_DOC_SCORE) pairs.push({ d, l, score });
+          }
+        }
+        pairs.sort((a, b) => b.score - a.score);
+        const pairedLinks = new Set();
+        for (const { d, l } of pairs) {
+          if (matched.has(d) || pairedLinks.has(l)) continue;
+          matched.add(d);
+          pairedLinks.add(l);
+          jobs.push({ doc: d, url: l.url, link: l, renamed: true });
+        }
         for (const l of fresh) {
-          const d = inFolder.find((x) => !matched.has(x) && !links.some((k) => k.url === x.source.url) &&
-            ((x.source.linkText && linkKey(x.source.linkText) === linkKey(l.text)) || editionKey(fileNameFor(x.source.url)) === editionKey(fileNameFor(l.url))));
-          if (d) { matched.add(d); jobs.push({ doc: d, url: l.url, link: l, renamed: true }); }
-          else add('New on the page', { kind: 'new', folder: f, link: l, checked: true, tone: 'up', title: l.text, detail: `${fmtSize(l.shownSize) || ''} ${esc(fileNameFor(l.url))}`.trim() });
+          if (pairedLinks.has(l)) continue;
+          add('New on the page', { kind: 'new', folder: f, link: l, checked: !l.parent, tone: 'up', title: l.text, detail: `${[fmtSize(l.shownSize), l.note].filter(Boolean).join(' · ')} · ${esc(fileNameFor(l.url))}` });
         }
         for (const d of inFolder) {
           if (!matched.has(d)) { add('No longer on the page', { info: true, title: d.name, detail: 'Kept in your library. The site may have moved or retired it.' }); covered.add(d); }
@@ -1750,12 +1803,15 @@ async function checkSources({ docIds = null, folderIds = null, quiet = false } =
         if (d.kind !== 'html' && dl.info.type === 'text/html') throw new Error('the link now opens a web page instead of the document');
         const { pages, bytes } = await readFile(new File([dl.bytes], fileNameFor(dl.info.finalUrl || job.url, dl.info.type), { type: dl.info.type }));
         const c = compareVersions(d, pages, dl.info.size);
-        const source = { ...d.source, url: job.url, linkText: job.link?.text || d.source.linkText, etag: dl.info.etag, lastModified: dl.info.lastModified, size: dl.info.size, checkedAt: Date.now() };
+        const source = { ...d.source, url: job.url, linkText: job.link?.text || d.source.linkText, note: job.link?.note || d.source.note, etag: dl.info.etag, lastModified: dl.info.lastModified, size: dl.info.size, checkedAt: Date.now() };
         if (c.same) { upToDate++; d.source = source; continue; }
+        // a renamed document takes its new title (unless it was named some other way)
+        const newName = job.renamed && job.link?.text && d.source.linkText && d.name === nameFromLink(d.source.linkText, d.source.url, '')
+          ? nameFromLink(job.link.text, job.url, dl.info.type) : undefined;
         add(c.suspicious ? 'Looks wrong — check before updating' : 'Updated on the site', {
-          kind: 'update', doc: d, payload: { pages, bytes, size: dl.info.size, source }, checked: !c.suspicious, tone: c.suspicious ? 'warn' : 'up',
+          kind: 'update', doc: d, payload: { pages, bytes, size: dl.info.size, source, name: newName }, checked: !c.suspicious, tone: c.suspicious ? 'warn' : 'up',
           title: d.name,
-          detail: `${c.detail}${job.renamed ? ` · new file: ${esc(fileNameFor(job.url))}` : ''}${c.suspicious ? ` — ${c.reasons.join(', ')}` : ''}`,
+          detail: `${c.detail}${job.renamed ? ` · now “${esc(job.link?.text || fileNameFor(job.url))}”${job.link?.note ? ` (${esc(job.link.note)})` : ''}, new file ${esc(fileNameFor(job.url))}` : ''}${c.suspicious ? ` — ${c.reasons.join(', ')}` : ''}`,
         });
       } catch (err) {
         failures++;
@@ -1797,7 +1853,7 @@ async function checkSources({ docIds = null, folderIds = null, quiet = false } =
   for (const r of rows) {
     if (r.kind === 'update' && res.picked.has(r)) { await replaceDoc(r.doc, r.payload, res.options.keep); updated++; }
     if (r.kind === 'new') {
-      if (res.picked.has(r)) addRemote(r.link.url, { folderId: r.folder.id, linkText: r.link.text, info: { size: r.link.shownSize } });
+      if (res.picked.has(r)) addRemote(r.link.url, { folderId: r.folder.id, linkText: r.link.text, note: r.link.note, info: { size: r.link.shownSize } });
       else (r.folder.source.ignored ||= []).push(r.link.url); // don't suggest it again
     }
   }
