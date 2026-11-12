@@ -44,7 +44,7 @@ Browsers don't let one website read files from another unless that site allows i
 
 1. Go to **https://dash.cloudflare.com** and create a free account (or sign in).
 2. In the left menu open **Workers & Pages** (it may be under **Compute**).
-3. Click **Create application**, choose **Create Worker** (the "Hello World" starter), name it `instant-search-helper`, and click **Deploy**.
+3. Click **Create application**, then **Start with Hello World!**. Name it `instant-search-helper` and click **Deploy**.
 4. On the next screen click **Edit code**.
 5. Delete everything in the editor. Open [`helper/cloudflare-worker.js`](helper/cloudflare-worker.js) in this repo, copy all of it, and paste it in.
 6. Click **Deploy** (top right).
