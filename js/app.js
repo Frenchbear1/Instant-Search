@@ -2038,6 +2038,8 @@ For each file give:
 - PAGE: the publisher's web page that lists this document and its download, i.e. the page they update when a new edition comes out. This matters most, because the app watches that page for new editions.
 - FILE: the direct download link of the current edition (usually a .pdf), exactly as linked on that page.
 
+Several of my files often come from the same page — for example one handbook page that lists the whole book and every chapter separately, or a page listing a manual and each of its changes. That's expected: still write one line per file, repeat the same PAGE on each of those lines, and give each line the FILE link for that particular file (the chapter's own link for a chapter, the whole-book link only for the whole book). Match by what the file is (its title and opening words), not just its name. Never put two of my files on the same FILE link unless they really are the same document.
+
 Reply with one code block and nothing else, one line per file, in exactly this format, with the file name copied exactly as I wrote it:
 <file name> | PAGE: <link or NOT FOUND> | FILE: <link or NOT FOUND>
 
@@ -2174,6 +2176,16 @@ async function linkWithAi() {
       try {
         pageInfo = await readPage(page);
         link = file && pageInfo.links.find((l) => sameUrl(l.url, file));
+        if (link && d.size) {
+          // the AI picked a link on the page; if another link there is clearly this file, use that one
+          const alt = await findOnPage(page, pageInfo.links, d);
+          if (alt && alt.url !== link.url) {
+            try {
+              const [a, b] = await Promise.all([remoteInfo(link.url), remoteInfo(alt.url)]);
+              if (b.size === d.size && a.size !== d.size) { link = alt; pageNote = 'the AI picked another file on that page, so the matching one was used'; }
+            } catch {}
+          }
+        }
         if (!link) link = await findOnPage(page, pageInfo.links, d);
         if (!link) pageNote = file ? 'the page doesn’t list this file, so only the file is linked' : '';
       } catch (err) {
@@ -2192,6 +2204,8 @@ async function linkWithAi() {
       groups.bad.push({ info: true, tone: 'warn', title: d.name, detail: `Not linked — ${esc(helperProblem(err))}` });
       return;
     }
+    const owner = S.docs.find((o) => o !== d && o.source && sameUrl(o.source.url, url));
+    if (owner) { groups.bad.push({ info: true, tone: 'warn', title: d.name, detail: `Not linked — “${esc(owner.name)}” already follows that link.` }); return; }
     const same = d.size && info.size && d.size === info.size;
     const odd = !same && d.size && info.size && (info.size < d.size * 0.4 || info.size > d.size * 2.5);
     const watchPage = link && pageInfo ? page : '';
@@ -2225,6 +2239,22 @@ async function linkWithAi() {
   };
   try { await Promise.all([worker(), worker(), worker(), worker()]); } finally { t._hide(); }
 
+  // two of your files on the same link: keep the one that's the same file (or the first), set the others aside
+  const byUrl = new Map();
+  for (const r of groups.ok.concat(groups.warn)) (byUrl.get(r.source.url) || byUrl.set(r.source.url, []).get(r.source.url)).push(r);
+  for (const list of byUrl.values()) {
+    if (list.length < 2) continue;
+    const keep = list.find((r) => r.tone === 'up') || list.find((r) => r.checked) || list[0];
+    for (const r of list) {
+      if (r === keep) continue;
+      groups.ok = groups.ok.filter((x) => x !== r);
+      groups.warn = groups.warn.filter((x) => x !== r);
+      r.checked = false;
+      r.tone = 'warn';
+      r.detail += ` · <b>same link as “${esc(keep.doc.name)}” — only one file can follow a link</b>`;
+      groups.warn.push(r);
+    }
+  }
   const sec = (header, list) => { if (list.length) rows.push({ header }, ...list); };
   sec('Ready to link', groups.ok);
   sec('Check these first', groups.warn);
@@ -2241,7 +2271,8 @@ async function linkWithAi() {
     apply: picks ? 'Link' : 'OK',
   });
   if (!res || !picks) return;
-  const picked = rows.filter((r) => r.kind === 'ailink' && res.picked.has(r));
+  const seenUrl = new Set();
+  const picked = rows.filter((r) => r.kind === 'ailink' && res.picked.has(r) && !seenUrl.has(r.source.url) && seenUrl.add(r.source.url));
   const watch = !!res.options.watch;
   for (const r of picked) r.doc.source = { ...r.source, page: watch ? r.page : '' };
   if (watch) {
