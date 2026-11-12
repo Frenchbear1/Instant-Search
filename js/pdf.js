@@ -94,12 +94,12 @@ export function closePdf(docId) {
  * Render page n (0-based) into `host`. ranges: [[start,end,color,hitIndex|null]]
  * Returns a cleanup function.
  */
-export async function renderPdfPage(pdf, n, host, ranges) {
+export async function renderPdfPage(pdf, n, host, ranges, width) {
   const page = await pdf.getPage(n + 1);
   const base = page.getViewport({ scale: 1 });
-  const cssWidth = host.clientWidth || 700;
+  const cssWidth = Math.max(width || 0, host.clientWidth || 700);
   const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
-  const scale = Math.min((cssWidth * dpr) / base.width, 4);
+  const scale = Math.min(cssWidth * dpr, 4096) / base.width;
   const vp = page.getViewport({ scale });
 
   const frame = document.createElement('div');

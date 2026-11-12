@@ -16,7 +16,10 @@ Open `index.html` from any static host (it's a plain static site, no build step)
 - **Folders**: tick a folder to search everything in it (or untick it to leave it out); the target button searches only that folder. Drag documents between folders, drop files from your computer straight onto a folder, add a whole folder from your computer (it becomes a library folder), or use the ▾ next to Add documents to import a batch into an existing or new folder. Deleting a folder keeps its documents.
 - Library checkboxes choose which documents are searched; the target button searches only one.
 - **Sort** results by library order, documents with most hits, or pages with most hits (every hit page across all documents, ranked).
-- Light and dark themes, phone layout, keyboard shortcuts (see the ? button in the app).
+- **Keyboard shortcuts you can change** (keyboard button or `?`): next/previous hit (N), next/previous page with hits (] [ or J K), next/previous document (Shift+] Shift+[), first/last hit, pan, zoom, fit, switch search type and more. Click + to add a key, click a key to remove it.
+- **Minimize the toolbar** (chevron button or H) so only the search box is left. The search type becomes a pill inside the box: tap it for options, or press and drag sideways to slide between types. The full toolbar's type buttons can be dragged across the same way. The library can be hidden too (L).
+- **Zoom** with the floating controls: − / + / 100%, fit width, fit page. Text pages get bigger type; PDF pages in Original view get sharper and pan sideways when wider than the screen.
+- Light and dark themes, phone layout.
 
 ## Files
 
@@ -27,6 +30,7 @@ js/app.js           UI: library, results, reader, navigation
 js/search.js        search engine (all modes) — pure functions
 js/ingest.js        file reading and pagination
 js/pdf.js           PDF text extraction + original page rendering
+js/keys.js          keyboard combo helpers
 js/store.js         IndexedDB storage
 sw.js               offline cache
 vendor/             pdf.js 3.11.174 and mammoth 1.13.0 (bundled so it works offline)

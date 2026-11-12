@@ -2,6 +2,7 @@ import { compile, MODES } from './search.js';
 import { store } from './store.js';
 import { readFile, kindOf, ACCEPT } from './ingest.js';
 import { getPdf, closePdf, renderPdfPage, EXTRACTOR_VERSION } from './pdf.js';
+import { comboFromEvent, comboLabel, worksWhileTyping, isMac } from './keys.js';
 
 // ---------- small helpers ----------
 const $ = (s, r = document) => r.querySelector(s);
@@ -42,7 +43,7 @@ const I = {
 // ---------- preferences ----------
 const PREF_KEY = 'instant-search:prefs';
 const prefs = Object.assign(
-  { mode: 'all', matchCase: false, wholeWord: false, near: 8, sort: 'library', view: 'text', theme: 'auto', q: '' },
+  { mode: 'all', matchCase: false, wholeWord: false, near: 8, sort: 'library', view: 'text', theme: 'auto', q: '', zoom: 1, compact: false, sideHidden: false, keys: {} },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })()
 );
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
@@ -207,10 +208,10 @@ function pageMode(doc, n) {
 }
 
 function estimate(doc, n) {
-  const w = results.root.clientWidth || reader.root.clientWidth || 720;
-  if (pageMode(doc, n) === 'original') return Math.round(Math.min(w, 860) * S.pageAspect) + 56;
+  const z = zoomValue();
+  if (pageMode(doc, n) === 'original') return Math.round(BASE_W * z * S.pageAspect) + 56;
   const chars = (S.texts.get(doc.id)?.[n] || '').length;
-  return Math.max(150, Math.round(chars * S.pxPerChar) + 80);
+  return Math.max(150, Math.round(chars * S.pxPerChar * z) + 80);
 }
 
 const io = new IntersectionObserver(
@@ -280,7 +281,7 @@ function fill(art) {
       try {
         const pdf = await getPdf(doc.id, () => store.file(doc.id));
         if (token !== art._token) return;
-        const cleanup = await renderPdfPage(pdf, n, body, ranges);
+        const cleanup = await renderPdfPage(pdf, n, body, ranges, BASE_W * zoomValue());
         if (token !== art._token) { cleanup(); return; }
         art._cleanup = cleanup;
         const fr = body.querySelector('.pdf-frame');
@@ -297,7 +298,7 @@ function fill(art) {
     }
     body.style.height = '';
     if (pageMode(doc, n) === 'text' && text.length > 600) {
-      const ratio = (body.offsetHeight - 40) / text.length;
+      const ratio = (body.offsetHeight - 40) / text.length / zoomValue();
       if (ratio > 0.05 && ratio < 2) S.pxPerChar = S.pxPerChar * 0.8 + ratio * 0.2;
     }
     if (v.cur >= 0) markCurrent(v);
@@ -723,21 +724,33 @@ function updateSummary() {
     html += `<button class="back-btn" data-act="back">${I.arrowLeft}<span>Results</span></button>
       <span class="reader-title"><span class="ftype ${doc?.kind}">${KIND_LABEL[doc?.kind] || ''}</span><b>${esc(doc?.name || '')}</b></span>
       <label class="jump">Page <input id="jumpInput" type="number" min="1" max="${count}" value="1" inputmode="numeric"> <span>of ${fmt(count)}</span></label>`;
-  } else if (S.matcher && v.list.length) {
-    const pages = v.list.reduce((a, R) => a + R.pages.length, 0);
-    const docCount = new Set(v.list.map((R) => R.doc.id)).size;
-    const scope = S.docs.filter((d) => d.enabled && searchable(d)).length;
-    html += `<span class="stat"><b>${fmt(v.total)}</b> ${v.total === 1 ? 'hit' : 'hits'} on <b>${fmt(pages)}</b> ${pages === 1 ? 'page' : 'pages'} in <b>${fmt(docCount)}</b> of ${plural(scope, 'document')}</span>`;
   }
+  let terms = '';
   if (S.matcher && S.terms.length) {
     const counts = termCounts(v);
     const chips = S.terms.map((t) => t.neg
       ? `<span class="term neg" title="Pages with this are excluded">−${esc(t.label)}</span>`
       : `<button class="term c${t.color}" data-color="${t.color}" title="Jump to next “${esc(t.label)}”"><i></i>${esc(t.label)}<span>${fmt(counts.get(t.color) || 0)}</span></button>`);
-    html += `<span class="terms">${chips.join('')}</span>`;
+    terms = `<span class="terms">${chips.join('')}</span>`;
   }
+  // when the toolbar is minimized, the word chips ride along above the results instead
+  const termsUp = !(prefs.compact && v.kind === 'results');
+  if (termsUp) html += terms;
   box.innerHTML = html;
   box.hidden = !html;
+
+  const head = $('#resultsHead');
+  const showHead = v.kind === 'results' && S.matcher && v.list.length;
+  head.hidden = !showHead;
+  if (showHead) {
+    const pages = v.list.reduce((a, R) => a + R.pages.length, 0);
+    const docCount = new Set(v.list.map((R) => R.doc.id)).size;
+    const scope = S.docs.filter((d) => d.enabled && searchable(d)).length;
+    $('#stat').innerHTML = `<span><b>${fmt(v.total)}</b> ${v.total === 1 ? 'hit' : 'hits'} on <b>${fmt(pages)}</b> ${pages === 1 ? 'page' : 'pages'} in <b>${fmt(docCount)}</b> of ${plural(scope, 'document')}</span>${termsUp ? '' : terms}`;
+  }
+  const dock = $('#dock');
+  dock.hidden = !(v.kind === 'reader' || showHead);
+  document.body.classList.toggle('has-dock', !dock.hidden);
 }
 
 function updateOutline() {
@@ -830,7 +843,14 @@ function syncControls() {
   $('#sortSel').value = prefs.sort;
   $$('#viewSeg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === prefs.view)));
   $('#viewSeg').hidden = !S.docs.some((d) => d.kind === 'pdf');
-  $('#sortSel').parentElement.hidden = active === reader;
+  document.body.classList.toggle('compact', !!prefs.compact);
+  document.body.classList.toggle('side-hidden', !!prefs.sideHidden);
+  $('#compactBtn').title = prefs.compact ? `Show the full toolbar (${keyHint('toggleCompact')})` : `Minimize the toolbar (${keyHint('toggleCompact')})`;
+  const flags = [prefs.matchCase ? 'Aa' : '', prefs.wholeWord && prefs.mode !== 'regex' ? '<u>ab</u>' : '', prefs.mode === 'near' ? `≤${prefs.near}` : ''].filter(Boolean);
+  $('#modePill').innerHTML = `<span class="full">${MODE_SHORT[prefs.mode]}</span><span class="short">${MODE_TINY[prefs.mode]}</span>${flags.map((f) => `<em>${f}</em>`).join('')}<svg viewBox="0 0 24 24"><path d="M8 10l4 4 4-4"/></svg>`;
+  $('#zoomVal').textContent = Math.round(zoomValue() * 100) + '%';
+  $('#fitWidth').setAttribute('aria-pressed', String(prefs.zoom === 'width'));
+  $('#fitPage').setAttribute('aria-pressed', String(prefs.zoom === 'page'));
   q.placeholder = {
     any: 'Pages with any of these words…',
     all: 'Pages with all of these words…',
@@ -1333,14 +1353,67 @@ function bind() {
   $('#sortSel').addEventListener('change', (e) => { prefs.sort = e.target.value; runSearch(); });
   $('#viewSeg').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-view]');
-    if (!b || prefs.view === b.dataset.view) return;
-    prefs.view = b.dataset.view;
-    savePrefs();
-    override.clear();
-    syncControls();
-    refreshInPlace(active);
-    if (active === reader) results.dirty = true;
+    if (b) setView(b.dataset.view);
   });
+  $('#zoomIn').addEventListener('click', () => zoomBy(1));
+  $('#zoomOut').addEventListener('click', () => zoomBy(-1));
+  $('#zoomVal').addEventListener('click', () => setZoom(1));
+  $('#fitWidth').addEventListener('click', () => setZoom(prefs.zoom === 'width' ? 1 : 'width'));
+  $('#fitPage').addEventListener('click', () => setZoom(prefs.zoom === 'page' ? 1 : 'page'));
+  let resizeTimer;
+  addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (typeof prefs.zoom === 'string') applyZoom(); }, 150); });
+  $('#compactBtn').addEventListener('click', toggleCompact);
+  $('#keysBtn').addEventListener('click', openKeys);
+
+  // search type pill (compact toolbar) and the full segmented control both support press-and-drag
+  bindModeScrub($('#modePill'), {
+    startIndex: () => Object.keys(MODES).indexOf(prefs.mode),
+    onTap: () => modeMenu($('#modePill')),
+  });
+  bindModeScrub($('#modes'), {
+    startIndex: (e) => { const b = e.target.closest?.('button[data-mode]'); return b ? Object.keys(MODES).indexOf(b.dataset.mode) : -1; },
+    onTap: (s) => setMode(Object.keys(MODES)[s.idx]),
+  });
+  let wheelAt = 0;
+  $('#modePill').addEventListener('wheel', (e) => {
+    e.preventDefault();
+    if (Date.now() - wheelAt < 180) return;
+    wheelAt = Date.now();
+    const modes = Object.keys(MODES);
+    const i = modes.indexOf(prefs.mode) + (e.deltaY > 0 || e.deltaX > 0 ? 1 : -1);
+    setMode(modes[(i + modes.length) % modes.length]);
+  }, { passive: false });
+
+  // shortcut editor
+  $('#keys').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget || e.target.closest('[data-close]')) { recording = null; $('#keys').close(); return; }
+    const chip = e.target.closest('.kchip');
+    const add = e.target.closest('.kadd');
+    const reset = e.target.closest('.kreset');
+    if (chip) setBindings(chip.dataset.id, bindings(actionById(chip.dataset.id)).filter((k) => k !== chip.dataset.key));
+    else if (add) { recording = add.dataset.id; renderKeys(); $('#keysList').focus({ preventScroll: true }); }
+    else if (reset) setBindings(reset.dataset.id, actionById(reset.dataset.id).keys);
+  });
+  $('#keysReset').addEventListener('click', () => { prefs.keys = {}; savePrefs(); buildKeyMap(); renderKeys(); syncControls(); toast('Shortcuts reset to defaults', { ms: 1800 }); });
+  $('#keys').addEventListener('cancel', (e) => { if (recording) { e.preventDefault(); recording = null; renderKeys(); } });
+  addEventListener('keydown', (e) => {
+    if (!recording || !$('#keys').open) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === 'Escape') { recording = null; renderKeys(); return; }
+    const combo = comboFromEvent(e);
+    if (!combo) return;
+    const id = recording;
+    recording = null;
+    setTimeout(() => $(`.kadd[data-id="${id}"]`)?.focus({ preventScroll: true }), 0);
+    const other = ACTIONS.find((a) => a.id && a.id !== id && bindings(a).includes(combo));
+    if (other) {
+      setBindings(other.id, bindings(other).filter((k) => k !== combo));
+      toast(`${comboLabel(combo)} moved from “${other.label}”`, { ms: 2600 });
+    }
+    const mine = bindings(actionById(id));
+    setBindings(id, mine.includes(combo) ? mine : [...mine, combo]);
+  }, true);
   $('#themeBtn').addEventListener('click', () => {
     prefs.theme = { auto: 'light', light: 'dark', dark: 'auto' }[prefs.theme] || 'auto';
     savePrefs();
@@ -1517,23 +1590,17 @@ function bind() {
   // keyboard
   addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && $('.pop-menu')) { closeMenu(); return; }
-    const mod = e.metaKey || e.ctrlKey;
-    const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable;
-    if ((mod && (e.key === 'f' || e.key === 'k')) || (!typing && e.key === '/')) {
-      e.preventDefault();
-      q.focus();
-      q.select();
-    } else if (e.key === 'F3' || (mod && e.key.toLowerCase() === 'g')) {
-      e.preventDefault();
-      step(e.shiftKey ? -1 : 1);
-    } else if (e.altKey && /^Digit[1-6]$/.test(e.code)) {
-      e.preventDefault();
-      setMode(Object.keys(MODES)[Number(e.code.slice(5)) - 1]);
-    } else if (!typing && e.key === 'Escape' && active === reader && !$('#help').open) {
-      closeReader();
-    } else if (!typing && !mod && (e.key === 'n' || e.key === 'N')) {
-      step(e.shiftKey ? -1 : 1);
-    }
+    if ($('dialog[open]') || e.isComposing) return;
+    const combo = comboFromEvent(e);
+    if (!combo) return;
+    const a = keyMap.get(combo);
+    if (!a) return;
+    const el = document.activeElement;
+    const typing = /INPUT|TEXTAREA|SELECT/.test(el?.tagName) || el?.isContentEditable;
+    if (typing && !worksWhileTyping(combo)) return;
+    if (a.id === 'back' && active !== reader) return;
+    e.preventDefault();
+    a.run();
   });
 
   // drag & drop anywhere
@@ -1552,7 +1619,7 @@ function bind() {
   });
 
   // mobile drawer
-  $('#menuBtn').addEventListener('click', () => document.body.classList.toggle('drawer'));
+  $('#menuBtn').addEventListener('click', toggleLibrary);
   $('#scrim').addEventListener('click', closeDrawer);
 
   // keep the sticky offset accurate
@@ -1562,6 +1629,302 @@ function bind() {
 }
 const closeDrawer = () => document.body.classList.remove('drawer');
 let resetDrag = () => {};
+
+const MODE_SHORT = { any: 'Any word', all: 'All words', phrase: 'Phrase', near: 'Near', boolean: 'Boolean', regex: 'Regex' };
+const MODE_TINY = { any: 'Any', all: 'All', phrase: '“ ”', near: 'Near', boolean: 'Bool', regex: '.*' };
+
+// ---------- zoom ----------
+const BASE_W = 840; // page width at 100%
+const ZOOM_STEPS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+function zoomValue() {
+  const z = prefs.zoom;
+  if (z === 'width') {
+    const w = $('.col')?.clientWidth || BASE_W;
+    return Math.min(3, Math.max(0.4, w / BASE_W));
+  }
+  if (z === 'page') {
+    const avail = innerHeight - ($('.topbar')?.offsetHeight || 0) - 48 - 44 - 24;
+    const w = Math.min(avail / S.pageAspect, $('.col')?.clientWidth || BASE_W);
+    return Math.min(3, Math.max(0.3, w / BASE_W));
+  }
+  return Math.min(3, Math.max(0.4, Number(z) || 1));
+}
+
+// keep the page you're looking at in place while sizes change
+function captureAnchor() {
+  const y = topOffset() + ($('.doc-head')?.offsetHeight || 0) + 24;
+  const x = active.root.getBoundingClientRect().left + active.root.clientWidth / 2;
+  const art = document.elementFromPoint(x, y)?.closest?.('.page');
+  if (!art) return null;
+  const r = art.getBoundingClientRect();
+  return { art, y, ratio: (y - r.top) / Math.max(1, r.height) };
+}
+function restoreAnchor(a) {
+  if (!a || !a.art.isConnected) return;
+  const r = a.art.getBoundingClientRect();
+  window.scrollBy({ top: r.top + a.ratio * r.height - a.y, behavior: 'instant' });
+}
+
+let zoomTimer;
+function applyZoom() {
+  const anchor = captureAnchor();
+  document.documentElement.style.setProperty('--z', zoomValue().toFixed(4));
+  syncControls();
+  restoreAnchor(anchor);
+  clearTimeout(zoomTimer);
+  zoomTimer = setTimeout(() => {
+    // redraw original pages at the new size so they stay sharp
+    const a = captureAnchor();
+    for (const art of active.pageEls.values()) if (art._cleanup) refill(art);
+    requestAnimationFrame(() => restoreAnchor(a));
+  }, 260);
+}
+function setZoom(z) {
+  prefs.zoom = z;
+  savePrefs();
+  applyZoom();
+}
+function zoomBy(dir) {
+  const cur = zoomValue();
+  const next = dir > 0 ? ZOOM_STEPS.find((s) => s > cur + 0.01) : [...ZOOM_STEPS].reverse().find((s) => s < cur - 0.01);
+  setZoom(next ?? (dir > 0 ? 3 : 0.5));
+}
+
+// ---------- smart navigation ----------
+function hitPages(v) {
+  const arr = [];
+  for (const R of v.list) for (const p of R.pages) if (p.ranges.length) arr.push({ R, p });
+  return arr;
+}
+// Which hit page is "current": the one holding the current hit, or the one on screen if you've scrolled away.
+function pageCursor(v, arr) {
+  const moved = v.navY == null || Math.abs(scrollY - v.navY) > innerHeight * 0.8;
+  if (v.cur >= 0 && !moved) {
+    return { i: arr.findIndex((x) => v.cur >= x.p.h0 && v.cur < x.p.h0 + x.p.ranges.length), inside: true };
+  }
+  const top = topOffset() + ($('.doc-head')?.offsetHeight || 0);
+  let lo = 0, hi = arr.length - 1, idx = arr.length;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const a = v.pageEls.get(pkey(arr[mid].R.doc.id, arr[mid].p.n));
+    const r = a ? a.getBoundingClientRect() : { bottom: 0 };
+    if (r.bottom > top + 40) { idx = mid; hi = mid - 1; } else lo = mid + 1;
+  }
+  if (idx >= arr.length) return { i: arr.length - 1, inside: true };
+  const a = v.pageEls.get(pkey(arr[idx].R.doc.id, arr[idx].p.n));
+  return { i: idx, inside: a ? a.getBoundingClientRect().top < top + 60 : true };
+}
+function stepPage(dir) {
+  const v = active;
+  const arr = hitPages(v);
+  if (!arr.length) return;
+  const { i, inside } = pageCursor(v, arr);
+  let t = dir > 0 ? (inside ? i + 1 : i) : i - 1;
+  t = ((t % arr.length) + arr.length) % arr.length;
+  goTo(v, arr[t].p.h0);
+}
+function stepDoc(dir) {
+  const v = active;
+  const arr = hitPages(v);
+  if (!arr.length) return;
+  const { i, inside } = pageCursor(v, arr);
+  const docId = arr[i].R.doc.id;
+  if (dir > 0) {
+    let t = arr.findIndex((x, k) => k > i && x.R.doc.id !== docId);
+    if (!inside && t < 0) t = i;
+    goTo(v, arr[t < 0 ? 0 : t].p.h0);
+  } else {
+    // start of this document if we're past its first hit, otherwise the previous document
+    let start = i;
+    while (start > 0 && arr[start - 1].R.doc.id === docId) start--;
+    const atStart = v.cur === arr[start].p.h0 && !(v.navY == null || Math.abs(scrollY - v.navY) > innerHeight * 0.8);
+    if (!atStart) { goTo(v, arr[start].p.h0); return; }
+    let t = start - 1;
+    if (t < 0) t = arr.length - 1;
+    const prevDoc = arr[t].R.doc.id;
+    while (t > 0 && arr[t - 1].R.doc.id === prevDoc) t--;
+    goTo(v, arr[t].p.h0);
+  }
+}
+function pan(dir) {
+  window.scrollBy({ top: dir * (innerHeight - topOffset()) * 0.5, behavior: reduceMotion() ? 'instant' : 'smooth' });
+}
+function currentDocAndPage() {
+  const y = topOffset() + ($('.doc-head')?.offsetHeight || 0) + 24;
+  const art = document.elementFromPoint(active.root.getBoundingClientRect().left + 40, y)?.closest?.('.page');
+  return art ? { docId: art.dataset.doc, n: Number(art.dataset.n) } : null;
+}
+
+// ---------- keyboard shortcuts ----------
+const MOD = isMac ? 'Cmd' : 'Ctrl';
+const ACTIONS = [
+  { group: 'Move through results' },
+  { id: 'nextHit', label: 'Next hit', keys: ['N', 'F3'], run: () => step(1) },
+  { id: 'prevHit', label: 'Previous hit', keys: ['Shift+N', 'Shift+F3'], run: () => step(-1) },
+  { id: 'nextPage', label: 'Next page with hits', keys: [']', 'J'], run: () => stepPage(1) },
+  { id: 'prevPage', label: 'Previous page with hits', keys: ['[', 'K'], run: () => stepPage(-1) },
+  { id: 'nextDoc', label: 'Next document with hits', keys: ['Shift+]'], run: () => stepDoc(1) },
+  { id: 'prevDoc', label: 'Previous document with hits', keys: ['Shift+['], run: () => stepDoc(-1) },
+  { id: 'firstHit', label: 'First hit', keys: ['G'], run: () => goTo(active, 0) },
+  { id: 'lastHit', label: 'Last hit', keys: ['Shift+G'], run: () => goTo(active, active.total - 1) },
+  { id: 'panDown', label: 'Pan down half a screen', keys: ['Shift+J'], run: () => pan(1) },
+  { id: 'panUp', label: 'Pan up half a screen', keys: ['Shift+K'], run: () => pan(-1) },
+  { group: 'Search' },
+  { id: 'focusSearch', label: 'Go to the search box', keys: ['/', `${MOD}+K`, `${MOD}+F`], run: () => { q.focus(); q.select(); } },
+  ...Object.keys(MODES).map((m, i) => ({ id: `mode_${m}`, label: `Search type: ${MODES[m].label}`, keys: [`Alt+${i + 1}`], run: () => setMode(m) })),
+  { id: 'toggleCase', label: 'Match case on/off', keys: ['Alt+C'], run: () => { prefs.matchCase = !prefs.matchCase; runSearch(); } },
+  { id: 'toggleWord', label: 'Whole words on/off', keys: ['Alt+W'], run: () => { prefs.wholeWord = !prefs.wholeWord; runSearch(); } },
+  { group: 'View' },
+  { id: 'zoomIn', label: 'Zoom in', keys: ['=', 'Shift+='], run: () => zoomBy(1) },
+  { id: 'zoomOut', label: 'Zoom out', keys: ['-'], run: () => zoomBy(-1) },
+  { id: 'zoomReset', label: 'Zoom 100%', keys: ['0'], run: () => setZoom(1) },
+  { id: 'fitWidth', label: 'Fit width', keys: ['W'], run: () => setZoom('width') },
+  { id: 'fitPage', label: 'Fit page', keys: ['F'], run: () => setZoom('page') },
+  { id: 'toggleView', label: 'PDF pages: text / original', keys: ['O'], run: () => setView(prefs.view === 'text' ? 'original' : 'text') },
+  { id: 'toggleCompact', label: 'Minimize / show the toolbar', keys: ['H'], run: () => toggleCompact() },
+  { id: 'toggleLibrary', label: 'Hide / show the library', keys: ['L'], run: () => toggleLibrary() },
+  { id: 'readDoc', label: 'Read the whole document you’re on', keys: ['R'], run: () => { const c = currentDocAndPage(); if (c && active === results) openReader(c.docId, c.n); } },
+  { id: 'back', label: 'Back to results', keys: ['Escape', 'B'], run: () => closeReader() },
+  { id: 'openKeys', label: 'Show these shortcuts', keys: ['Shift+/'], run: () => openKeys() },
+];
+const actionById = (id) => ACTIONS.find((a) => a.id === id);
+const bindings = (a) => prefs.keys?.[a.id] ?? a.keys;
+let keyMap = new Map();
+function buildKeyMap() {
+  keyMap = new Map();
+  for (const a of ACTIONS) if (a.id) for (const k of bindings(a)) if (!keyMap.has(k)) keyMap.set(k, a);
+}
+function keyHint(id) {
+  const k = bindings(actionById(id))[0];
+  return k ? comboLabel(k) : 'no key';
+}
+function setBindings(id, keys) {
+  const a = actionById(id);
+  prefs.keys = { ...(prefs.keys || {}) };
+  if (JSON.stringify(keys) === JSON.stringify(a.keys)) delete prefs.keys[id];
+  else prefs.keys[id] = keys;
+  savePrefs();
+  buildKeyMap();
+  renderKeys();
+  syncControls();
+}
+
+let recording = null; // action id waiting for a key
+function openKeys() {
+  closeMenu();
+  recording = null;
+  renderKeys();
+  $('#keys').showModal();
+}
+function renderKeys() {
+  const list = $('#keysList');
+  let html = '';
+  for (const a of ACTIONS) {
+    if (a.group) { html += `<h4>${esc(a.group)}</h4>`; continue; }
+    const keys = bindings(a);
+    const custom = !!prefs.keys?.[a.id];
+    const chips = keys.map((k) => `<button class="kchip" data-id="${a.id}" data-key="${esc(k)}" title="Remove this key"><kbd>${esc(comboLabel(k))}</kbd>${I.x}</button>`).join('');
+    const rec = recording === a.id;
+    html += `<div class="krow${rec ? ' rec' : ''}"><span class="klabel">${esc(a.label)}</span><span class="kkeys">${chips}${rec ? '<span class="krec">Press a key… <em>Esc to cancel</em></span>' : `<button class="kadd" data-id="${a.id}" title="Add a key">${I.plus}</button>`}${custom ? `<button class="kreset" data-id="${a.id}" title="Back to default">Reset</button>` : ''}</span></div>`;
+  }
+  list.innerHTML = html;
+}
+
+function toggleCompact() {
+  prefs.compact = !prefs.compact;
+  savePrefs();
+  const a = captureAnchor();
+  updateChrome();
+  requestAnimationFrame(() => { restoreAnchor(a); if (prefs.zoom === 'page') applyZoom(); });
+}
+function toggleLibrary() {
+  if (innerWidth <= 900) { document.body.classList.toggle('drawer'); return; }
+  prefs.sideHidden = !prefs.sideHidden;
+  savePrefs();
+  syncControls();
+  if (prefs.zoom === 'width') applyZoom();
+}
+function setView(view) {
+  if (prefs.view === view) return;
+  prefs.view = view;
+  savePrefs();
+  override.clear();
+  syncControls();
+  refreshInPlace(active);
+  if (active === reader) results.dirty = true;
+}
+
+// ---------- search type pill: tap for options, press and drag sideways to switch ----------
+function modeMenu(anchor) {
+  const items = Object.keys(MODES).map((m, i) => ({ label: MODES[m].label, checked: prefs.mode === m, run: () => setMode(m) }));
+  items.push({ sep: true });
+  items.push({ label: 'Match case', checked: prefs.matchCase, run: () => { prefs.matchCase = !prefs.matchCase; runSearch(); } });
+  items.push({ label: 'Whole words only', checked: prefs.wholeWord, disabled: prefs.mode === 'regex', run: () => { prefs.wholeWord = !prefs.wholeWord; runSearch(); } });
+  if (prefs.mode === 'near') {
+    items.push({ header: 'Near: words apart' });
+    for (const n of [3, 5, 8, 12, 20, 40]) items.push({ label: `Within ${n} words`, checked: Number(prefs.near) === n, run: () => { prefs.near = n; runSearch(); } });
+  }
+  items.push({ sep: true }, { label: 'Show the full toolbar', run: () => toggleCompact() });
+  openMenu(anchor, items);
+}
+
+function bindModeScrub(el, { onTap, startIndex }) {
+  const modes = Object.keys(MODES);
+  let st = null;
+  const show = () => {
+    st.scrub = true;
+    clearTimeout(st.timer);
+    closeMenu();
+    const bar = el.ownerDocument.createElement('div');
+    bar.className = 'scrubber';
+    bar.innerHTML = modes.map((m) => `<span data-mode="${m}">${MODE_SHORT[m]}</span>`).join('');
+    document.body.append(bar);
+    const r = el.getBoundingClientRect();
+    const item = bar.children[st.idx];
+    const center = item.offsetLeft + item.offsetWidth / 2;
+    let left = st.x - center;
+    left = Math.max(8, Math.min(innerWidth - bar.offsetWidth - 8, left));
+    bar.style.left = left + 'px';
+    bar.style.top = r.bottom + 8 + 'px';
+    st.bar = bar;
+    mark();
+    el.classList.add('scrubbing');
+  };
+  const mark = () => [...st.bar.children].forEach((c, i) => c.classList.toggle('on', i === st.idx));
+  el.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    st = { x: e.clientX, idx: startIndex(e), scrub: false, id: e.pointerId };
+    if (st.idx < 0) { st = null; return; }
+    el.setPointerCapture(e.pointerId);
+    st.timer = setTimeout(show, 260);
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (!st) return;
+    if (!st.scrub && Math.abs(e.clientX - st.x) > 8) show();
+    if (!st.scrub) return;
+    const kids = [...st.bar.children];
+    let i = kids.findIndex((c) => { const r = c.getBoundingClientRect(); return e.clientX >= r.left && e.clientX < r.right; });
+    if (i < 0) i = e.clientX < kids[0].getBoundingClientRect().left ? 0 : kids.length - 1;
+    if (i !== st.idx) { st.idx = i; mark(); navigator.vibrate?.(4); }
+  });
+  const end = (apply) => {
+    if (!st) return;
+    clearTimeout(st.timer);
+    const s = st;
+    st = null;
+    el.classList.remove('scrubbing');
+    if (s.bar) { s.bar.classList.add('out'); setTimeout(() => s.bar.remove(), 150); }
+    if (s.scrub) { if (apply) setMode(modes[s.idx]); }
+    else if (apply) onTap(s);
+  };
+  el.addEventListener('pointerup', () => end(true));
+  el.addEventListener('pointercancel', () => end(false));
+  el.addEventListener('lostpointercapture', () => end(false));
+  el.addEventListener('click', (e) => {
+    e.stopPropagation(); // the pointer handlers already acted; don't let the page close a menu we just opened
+    if (e.detail === 0) onTap({ idx: startIndex(e) }); // keyboard activation
+  });
+}
 
 function setMode(mode) {
   if (!MODES[mode] || prefs.mode === mode) return;
@@ -1576,8 +1939,10 @@ async function start() {
   $('#modes').innerHTML = Object.entries(MODES)
     .map(([k, m], i) => `<button data-mode="${k}" title="${m.hint} (Alt+${i + 1})">${m.label}</button>`)
     .join('');
+  buildKeyMap();
   bind();
   q.value = prefs.q || '';
+  document.documentElement.style.setProperty('--z', '1');
   syncControls();
   try {
     const [docs, texts, folders] = await Promise.all([store.allDocs(), store.allTexts(), store.allFolders()]);
@@ -1588,6 +1953,7 @@ async function start() {
     toast('This browser is blocking local storage, so documents won’t be kept after you close the page.');
   }
   runSearch();
+  applyZoom();
   updateStorage();
   document.body.classList.add('ready');
   navigator.storage?.persist?.().catch(() => {});
