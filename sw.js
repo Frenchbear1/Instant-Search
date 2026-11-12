@@ -1,8 +1,8 @@
 // Offline support: app files are served from cache and refreshed in the background.
-const CACHE = 'instant-search-v6';
+const CACHE = 'instant-search-v7';
 const SHELL = [
   './', 'index.html', 'css/app.css',
-  'js/app.js', 'js/search.js', 'js/store.js', 'js/ingest.js', 'js/pdf.js', 'js/keys.js', 'js/htmlview.js',
+  'js/app.js', 'js/search.js', 'js/store.js', 'js/ingest.js', 'js/pdf.js', 'js/keys.js', 'js/htmlview.js', 'js/remote.js',
   'vendor/pdf.min.js', 'vendor/pdf.worker.min.js',
   'manifest.webmanifest', 'favicon.ico', 'icons/icon-192x192.png',
 ];

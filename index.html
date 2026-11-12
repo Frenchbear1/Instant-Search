@@ -42,6 +42,7 @@
         <span>Library <em id="libCount"></em></span>
         <span class="lib-head-acts">
           <button class="link" id="toggleAll" hidden>All</button>
+          <button class="mini" id="checkAllBtn" title="Check linked sources for updates" aria-label="Check linked sources for updates" hidden><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.8-4M4 4v4h4M4 13a8 8 0 0 0 14.8 4M20 20v-4h-4"/></svg></button>
           <button class="mini" id="newFolderBtn" title="New folder" aria-label="New folder"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v5M9.5 13.5h5"/></svg></button>
         </span>
       </div>
@@ -153,6 +154,36 @@
     </div>
   </div>
   <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <dialog id="linkDlg" aria-label="Add from a web link">
+    <form class="link-dlg" method="dialog" id="linkForm">
+      <header><h3>Add from a web link</h3><button class="icon-btn sm" type="button" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button></header>
+      <p class="muted">Paste a link to a document (like a PDF), or to a page that lists documents — for example an FAA handbook page. Linked documents can be checked for updates later.</p>
+      <input id="linkUrl" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://www.faa.gov/…" required />
+      <label class="link-row">Put it in
+        <select id="linkFolder"></select>
+      </label>
+      <p class="link-status" id="linkStatus" aria-live="polite"></p>
+      <div class="link-actions"><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="submit" id="linkGo">Add</button></div>
+      <details class="helper" id="helperBox">
+        <summary>Download helper <span id="helperState"></span></summary>
+        <p>Many official sites (including faa.gov) don’t let other websites download their files directly. A small free helper you run on Cloudflare fetches them for this app. Setup takes about 5 minutes — <a href="https://github.com/Frenchbear1/Instant-Search#linking-documents-from-websites" target="_blank" rel="noopener">step-by-step guide</a>.</p>
+        <label class="link-row">Helper address <input id="helperUrl" type="url" placeholder="https://instant-search-helper.yourname.workers.dev" autocomplete="off" spellcheck="false" /></label>
+        <div class="link-actions"><button class="btn" type="button" id="helperTest">Save &amp; test</button></div>
+        <label class="check-row"><input type="checkbox" id="autoCheck" /> Check linked sources for updates once a day when I open the app</label>
+      </details>
+    </form>
+  </dialog>
+
+  <dialog id="reviewDlg" aria-labelledby="reviewTitle">
+    <div class="review">
+      <header><h3 id="reviewTitle"></h3></header>
+      <p class="muted" id="reviewIntro"></p>
+      <div class="review-list" id="reviewList"></div>
+      <div class="review-opts" id="reviewOpts"></div>
+      <div class="link-actions"><button class="btn" type="button" id="reviewCancel">Cancel</button><button class="btn primary" type="button" id="reviewApply">Apply</button></div>
+    </div>
+  </dialog>
 
   <dialog id="keys" aria-label="Keyboard shortcuts">
     <div class="keys-dlg">

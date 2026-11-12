@@ -3,6 +3,7 @@ import { store } from './store.js';
 import { readFile, kindOf, ACCEPT } from './ingest.js';
 import { getPdf, closePdf, renderPdfPage, EXTRACTOR_VERSION } from './pdf.js';
 import { renderHtmlPage, forgetHtml } from './htmlview.js';
+import { remoteFetch, remoteInfo, remoteChanged, download, documentLinks, looksLikeDocument, fileNameFor, editionKey, linkKey, helper, NeedsHelper } from './remote.js';
 import { comboFromEvent, comboLabel, worksWhileTyping, isMac } from './keys.js';
 
 // ---------- small helpers ----------
@@ -32,6 +33,9 @@ const I = {
   minus: '<svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg>',
   fitW: '<svg viewBox="0 0 24 24"><path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4"/></svg>',
   fitP: '<svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="1.5"/></svg>',
+  link: '<svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>',
+  refresh: '<svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.8-4M4 4v4h4M4 13a8 8 0 0 0 14.8 4M20 20v-4h-4"/></svg>',
+  globe: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
   folder: '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
   folderPlus: '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v5M9.5 13.5h5"/></svg>',
   chevron: '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>',
@@ -866,8 +870,8 @@ function updateOutline() {
 function docItemHtml(d, hits) {
   const count = S.texts.get(d.id)?.length || d.pages || 0;
   const meta = d.status === 'indexing'
-    ? `Reading… ${d.progress ? Math.round(d.progress * 100) + '%' : ''}`
-    : `${plural(count, 'page')}${d.noText ? ' · <span class="warn">no text found</span>' : ''}`;
+    ? `${d.phase === 'download' ? 'Downloading' : 'Reading'}… ${d.progress ? Math.round(d.progress * 100) + '%' : ''}`
+    : `${d.source ? `<span class="linked" title="${esc(sourceTitle(d.source))}">${I.link}</span>` : ''}${plural(count, 'page')}${d.updatedAt && Date.now() - d.updatedAt < 14 * 864e5 ? ' · <span class="fresh-tag">updated</span>' : ''}${d.noText ? ' · <span class="warn">no text found</span>' : ''}`;
   const h = S.matcher && d.enabled && !d.status ? `<span class="lhits${hits.get(d.id) ? '' : ' zero'}">${fmt(hits.get(d.id) || 0)}</span>` : '';
   return `<li class="lib-item${d.enabled ? ' on' : ''}${d.status ? ' busy' : ''}${reader.docId === d.id && active === reader ? ' reading' : ''}" data-id="${d.id}" draggable="${d.status ? 'false' : 'true'}">
     <label class="chk" title="Include in search"><input type="checkbox" ${d.enabled ? 'checked' : ''} ${d.status ? 'disabled' : ''}><span></span></label>
@@ -900,7 +904,7 @@ function renderLibrary() {
     return `<li class="folder${f.collapsed ? ' collapsed' : ''}${rd.length && !on ? ' off' : ''}" data-fid="${f.id}">
       <div class="folder-row">
         <label class="chk" title="Search this whole folder"><input type="checkbox" data-fchk ${rd.length && on === rd.length ? 'checked' : ''} ${on && on < rd.length ? 'data-indet' : ''} ${rd.length ? '' : 'disabled'}><span></span></label>
-        <button class="folder-main" data-act="fold" title="${esc(f.name)}"><span class="chev">${I.chevron}</span><span class="ficon">${I.folder}</span><span class="fname">${esc(f.name)}</span><span class="fcount">${fmt(docs.length)}</span></button>
+        <button class="folder-main" data-act="fold" title="${esc(f.name)}"><span class="chev">${I.chevron}</span><span class="ficon">${I.folder}</span><span class="fname">${esc(f.name)}</span>${f.source ? `<span class="linked" title="${esc(sourceTitle(f.source))}">${I.link}</span>` : ''}<span class="fcount">${fmt(docs.length)}</span></button>
         ${badge}
         <span class="lib-acts"><button class="mini" data-act="fsolo" title="Search only this folder">${I.target}</button><button class="mini" data-act="fadd" title="Add documents to this folder">${I.plus}</button><button class="mini" data-act="fmenu" title="More">${I.more}</button></span>
       </div>
@@ -917,6 +921,7 @@ function renderLibrary() {
     }
   }
   $('#libEmpty').hidden = !!(S.docs.length || S.folders.length);
+  $('#checkAllBtn').hidden = !hasSources();
 }
 
 function syncControls() {
@@ -1208,6 +1213,12 @@ function docMenu(anchor, id) {
     { label: 'Read whole document', icon: I.book, disabled: !!d.status, run: () => { openReader(id); closeDrawer(); } },
     { label: 'Search only this', icon: I.target, disabled: !!d.status, run: () => solo(id) },
     { sep: true },
+    ...(d.source ? [
+      { sep: true },
+      { label: 'Check for an update', icon: I.refresh, disabled: !!d.status, run: () => checkSources({ docIds: [id] }) },
+      { label: 'Open the original link', icon: I.globe, run: () => window.open(d.source.url, '_blank', 'noopener') },
+    ] : []),
+    { sep: true },
     ...moveItems(d),
     { sep: true },
     { label: 'Remove from library', icon: I.trash, danger: true, run: () => removeDoc(id) },
@@ -1217,6 +1228,12 @@ function docMenu(anchor, id) {
 function folderMenu(anchor, fid) {
   openMenu(anchor, [
     { label: 'Add documents here…', icon: I.plus, run: () => pickFiles(fid) },
+    { label: 'Add from a web link…', icon: I.link, run: () => openLinkDialog(fid) },
+    ...(folderById(fid)?.source ? [
+      { label: 'Check for updates', icon: I.refresh, run: () => checkSources({ folderIds: [fid] }) },
+      { label: 'Open the linked page', icon: I.globe, run: () => window.open(folderById(fid).source.url, '_blank', 'noopener') },
+      { label: 'Unlink from the page', icon: I.out, run: () => { delete folderById(fid).source; saveFolders(); renderLibrary(); toast('The folder keeps its documents but won’t look for new ones'); } },
+    ] : []),
     { label: 'Search only this folder', icon: I.target, run: () => soloFolder(fid) },
     { label: 'Rename', icon: I.pencil, run: () => startRename(fid) },
     { sep: true },
@@ -1229,7 +1246,9 @@ function addMenu(anchor) {
     { label: 'Add files…', icon: I.plus, run: () => pickFiles(null) },
     { label: 'Add a folder from your computer…', icon: I.folderPlus, run: () => $('#dirInput').click() },
     { label: 'Add files into a new folder…', icon: I.folderPlus, run: () => pickFiles('new') },
+    { label: 'Add from a web link…', icon: I.link, run: () => openLinkDialog(null) },
   ];
+  if (hasSources()) items.push({ label: 'Check linked sources for updates', icon: I.refresh, run: () => checkSources() });
   if (S.folders.length) {
     items.push({ sep: true }, { header: 'Add files into' });
     for (const f of S.folders) items.push({ label: f.name, icon: I.folder, run: () => pickFiles(f.id) });
@@ -1301,6 +1320,7 @@ function addFiles(fileList, folderId = null, { quietSkip = false } = {}) {
   const bad = files.filter((f) => !kindOf(f.name));
   if (bad.length && !quietSkip) toast(`Skipped ${bad.length === 1 ? `“${bad[0].name}”` : plural(bad.length, 'file')} — use PDF, Word (.docx), text, Markdown or HTML`);
   let order = S.docs.reduce((m, d) => Math.max(m, d.order || 0), 0);
+  const maybeNewer = [];
   for (const file of files) {
     const kind = kindOf(file.name);
     if (!kind) continue;
@@ -1310,6 +1330,9 @@ function addFiles(fileList, folderId = null, { quietSkip = false } = {}) {
       else toast(`“${file.name}” is already in your library`);
       continue;
     }
+    // same name, or the same document with a different edition letter/year: probably a newer copy
+    const older = S.docs.find((d) => !d.status && d.kind === kind && (d.name === file.name || editionKey(d.name) === editionKey(file.name)));
+    if (older && !forceNew.has(file)) { maybeNewer.push({ file, doc: older }); continue; }
     const meta = { id: uid(), name: file.name, kind, size: file.size, addedAt: Date.now(), order: ++order, enabled: true, status: 'indexing', progress: 0, v: EXTRACTOR_VERSION, folderId: folderId || null };
     S.docs.push(meta);
     queue = queue.then(() => ingest(file, meta));
@@ -1317,7 +1340,9 @@ function addFiles(fileList, folderId = null, { quietSkip = false } = {}) {
   renderLibrary();
   syncControls();
   if (active === results && !S.matcher) renderView(results);
+  if (maybeNewer.length) offerReplacements(maybeNewer, folderId);
 }
+const forceNew = new WeakSet(); // files the person chose to add separately
 
 async function ingest(file, meta) {
   let last = 0;
@@ -1329,12 +1354,14 @@ async function ingest(file, meta) {
     });
     const chars = pages.reduce((a, p) => a + p.trim().length, 0);
     meta.pages = pages.length;
+    meta.hash = textHash(pages);
     meta.noText = meta.kind === 'pdf' && chars < pages.length * 25;
     if (meta.kind === 'html' && bytes) meta.hasOriginal = true;
     if (!S.docs.includes(meta)) return; // removed while reading
     if (meta.folderId && !folderById(meta.folderId)) meta.folderId = null;
     delete meta.status;
     delete meta.progress;
+    delete meta.phase;
     S.texts.set(meta.id, pages);
     try {
       await store.addDoc(stripMeta(meta), pages, bytes);
@@ -1360,6 +1387,427 @@ async function updateStorage() {
   } catch {}
 }
 
+// ---------- documents from websites ----------
+const fmtSize = (b) => (!b ? '' : b < 1024 * 1024 ? `${Math.max(1, Math.round(b / 1024))} KB` : `${(b / 1048576).toFixed(b < 10 * 1048576 ? 1 : 0)} MB`);
+const hasSources = () => S.docs.some((d) => d.source) || S.folders.some((f) => f.source);
+function sourceTitle(src) {
+  const when = src.checkedAt ? ` · checked ${new Date(src.checkedAt).toLocaleDateString()}` : '';
+  return `Linked to ${src.url}${when}`;
+}
+function textHash(pages) {
+  let h = 2166136261;
+  for (const p of pages) for (let i = 0; i < p.length; i++) { h ^= p.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0).toString(36) + ':' + pages.length;
+}
+// "Chapter 4: Principles of Flight (6.4 MB)" -> "Chapter 4 Principles of Flight.pdf"
+function nameFromLink(text, url, type) {
+  const file = fileNameFor(url, type);
+  const ext = (file.match(/\.[a-z0-9]+$/i) || [''])[0];
+  const clean = String(text || '')
+    .replace(/\(?\s*\d+(\.\d+)?\s*(KB|MB|GB)\s*\)?/gi, '')
+    .replace(/\b(pdf|download|opens? in new (tab|window))\b/gi, '')
+    .replace(/[\\/:*?"<>|]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return clean.length >= 3 && clean.length <= 120 ? clean + ext : file;
+}
+function helperProblem(err) {
+  if (err instanceof NeedsHelper) return 'This site doesn’t allow direct downloads, so the download helper is needed.';
+  if (/Failed to fetch|NetworkError|Load failed/i.test(err?.message || '')) return 'Couldn’t reach the download helper. Check its address below.';
+  return err?.message || String(err);
+}
+
+// Add one document from a link (download → read → save). Shows progress in the library.
+function addRemote(url, { folderId = null, linkText = '', info = null } = {}) {
+  const name = linkText ? nameFromLink(linkText, url, info?.type) : fileNameFor(url, info?.type);
+  const kind = kindOf(name) || 'html';
+  const order = S.docs.reduce((m, d) => Math.max(m, d.order || 0), 0) + 1;
+  const meta = { id: uid(), name, kind, size: info?.size || 0, addedAt: Date.now(), order, enabled: true, status: 'indexing', phase: 'download', progress: 0, v: EXTRACTOR_VERSION, folderId, source: { url, linkText } };
+  S.docs.push(meta);
+  renderLibrary();
+  queue = queue.then(async () => {
+    let last = 0;
+    try {
+      const dl = await download(url, (f) => {
+        meta.progress = f;
+        const now = performance.now();
+        if (now - last > 150) { last = now; renderLibrary(); }
+      });
+      if (kind !== 'html' && dl.info.type === 'text/html') throw new Error('the link opened a web page instead of a document');
+      meta.phase = 'read';
+      meta.progress = 0;
+      meta.size = dl.info.size;
+      meta.source = { url, linkText, etag: dl.info.etag, lastModified: dl.info.lastModified, size: dl.info.size, checkedAt: Date.now() };
+      await ingest(new File([dl.bytes], meta.name, { type: dl.info.type || '' }), meta);
+    } catch (err) {
+      S.docs = S.docs.filter((d) => d !== meta);
+      renderLibrary();
+      if (err instanceof NeedsHelper) { toast(`“${meta.name}”: ${helperProblem(err)}`); openLinkDialog(folderId, { url, helperOpen: true }); }
+      else toast(`Couldn’t add “${meta.name}”: ${helperProblem(err)}`, { ms: 6000 });
+    }
+  });
+}
+
+// Swap a document's contents for a newer version, optionally keeping the old one as "(previous)".
+async function replaceDoc(doc, { pages, bytes, size, name, source }, keepOld) {
+  if (keepOld) {
+    const oldBytes = await store.file(doc.id).catch(() => null);
+    const copy = { ...stripMeta(doc), id: uid(), name: doc.name.replace(/(\.[a-z0-9]+)?$/i, ' (previous)$1'), enabled: false, source: undefined, previousOf: doc.id, archivedAt: Date.now() };
+    delete copy.updatedAt;
+    S.docs.splice(S.docs.indexOf(doc) + 1, 0, copy);
+    S.texts.set(copy.id, S.texts.get(doc.id));
+    await store.addDoc(copy, S.texts.get(doc.id), oldBytes || undefined).catch(() => {});
+  }
+  closePdf(doc.id);
+  forgetHtml(doc.id);
+  for (const k of [...override.keys()]) if (k.startsWith(doc.id + ':')) override.delete(k);
+  const chars = pages.reduce((a, p) => a + p.trim().length, 0);
+  Object.assign(doc, {
+    pages: pages.length, size: size || doc.size, updatedAt: Date.now(), hash: textHash(pages),
+    noText: doc.kind === 'pdf' && chars < pages.length * 25,
+  });
+  if (name) doc.name = name;
+  if (source) doc.source = source;
+  if (doc.kind === 'html' && bytes) doc.hasOriginal = true;
+  S.texts.set(doc.id, pages);
+  await store.addDoc(stripMeta(doc), pages, bytes || undefined).catch((e) => toast(`Updated, but couldn’t save on this device (${e.message})`));
+}
+
+// Compare a new version with the copy in the library. Big drops in pages or size usually mean the
+// download isn't really the document (an error page, a single chapter instead of the book…).
+function compareVersions(doc, pages, size) {
+  const oldPages = S.texts.get(doc.id)?.length || doc.pages || 0;
+  const oldSize = doc.size || 0;
+  const same = doc.hash && doc.hash === textHash(pages);
+  const reasons = [];
+  if (oldPages >= 3 && pages.length < oldPages * 0.6) reasons.push(`only ${plural(pages.length, 'page')} instead of ${fmt(oldPages)}`);
+  if (oldSize > 50 * 1024 && size && size < oldSize * 0.4) reasons.push(`only ${fmtSize(size)} instead of ${fmtSize(oldSize)}`);
+  const chars = pages.reduce((a, p) => a + p.trim().length, 0);
+  if (doc.kind === 'pdf' && !doc.noText && chars < pages.length * 25) reasons.push('almost no text');
+  const detail = `${fmt(oldPages)} → ${plural(pages.length, 'page')}${oldSize && size ? ` · ${fmtSize(oldSize)} → ${fmtSize(size)}` : ''}`;
+  return { same, suspicious: reasons.length > 0, detail, reasons };
+}
+
+// ---------- review dialog ----------
+function review({ title, intro = '', rows, options = [], apply = 'Apply', cancel = 'Cancel' }) {
+  return new Promise((resolve) => {
+    const dlg = $('#reviewDlg');
+    $('#reviewTitle').textContent = title;
+    $('#reviewIntro').innerHTML = intro;
+    $('#reviewList').innerHTML = rows.map((r, i) => {
+      if (r.header) return `<h4>${esc(r.header)}</h4>`;
+      const body = `<span class="rtext"><b>${esc(r.title)}</b><span>${r.detail || ''}</span></span>`;
+      if (r.info) return `<div class="rrow info ${r.tone || ''}">${body}</div>`;
+      return `<label class="rrow ${r.tone || ''}"><input type="checkbox" data-i="${i}" ${r.checked ? 'checked' : ''}>${body}</label>`;
+    }).join('');
+    $('#reviewOpts').innerHTML = options.map((o) => `<label class="check-row"><input type="checkbox" data-o="${o.id}" ${o.checked ? 'checked' : ''}> ${esc(o.label)}</label>`).join('');
+    const actionable = rows.some((r) => !r.header && !r.info);
+    $('#reviewApply').hidden = !actionable;
+    $('#reviewApply').textContent = apply;
+    $('#reviewCancel').textContent = actionable ? cancel : 'Close';
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      const picked = new Set($$('#reviewList input:checked').map((x) => rows[Number(x.dataset.i)]));
+      const opts = Object.fromEntries($$('#reviewOpts input').map((x) => [x.dataset.o, x.checked]));
+      $('#reviewApply').onclick = $('#reviewCancel').onclick = null;
+      dlg.onclose = null;
+      if (dlg.open) dlg.close();
+      resolve(ok ? { picked, unpicked: rows.filter((r) => !r.header && !r.info && !picked.has(r)), options: opts } : null);
+    };
+    $('#reviewApply').onclick = () => finish(true);
+    $('#reviewCancel').onclick = () => finish(false);
+    dlg.onclose = () => finish(false);
+    closeMenu();
+    dlg.showModal();
+  });
+}
+
+// ---------- option 3: dropping in a newer copy of a document you already have ----------
+async function offerReplacements(list, folderId) {
+  const t = toast(`Comparing ${plural(list.length, 'file')} with the copies in your library…`, { ms: Infinity });
+  const rows = [{ header: 'Replace these?' }];
+  for (const item of list) {
+    try {
+      const { pages, bytes } = await readFile(item.file);
+      const c = compareVersions(item.doc, pages, item.file.size);
+      Object.assign(item, { pages, bytes });
+      rows.push({
+        item, checked: !c.suspicious, tone: c.suspicious ? 'warn' : c.same ? '' : 'up',
+        title: item.doc.name,
+        detail: `${c.same ? 'Same text as your copy' : c.detail}${item.file.name !== item.doc.name ? ` · from “${esc(item.file.name)}”` : ''}${c.suspicious ? ` — careful: ${c.reasons.join(', ')}` : ''}`,
+      });
+    } catch (err) {
+      rows.push({ info: true, tone: 'warn', title: item.file.name, detail: `Couldn’t read it: ${esc(err.message || err)}` });
+    }
+  }
+  t._hide();
+  const res = await review({
+    title: 'Newer copies of documents you have?',
+    intro: 'These look like new versions of documents already in your library. Ticked ones replace your copy (same folder and settings). Unticked ones are added as separate documents.',
+    rows,
+    options: [{ id: 'keep', label: 'Keep the old versions too (as “(previous)”, left out of searches)' }],
+    apply: 'Update',
+  });
+  if (!res) return;
+  for (const r of rows) {
+    if (!r.item || !r.item.pages) continue;
+    if (res.picked.has(r)) await replaceDoc(r.item.doc, { pages: r.item.pages, bytes: r.item.bytes, size: r.item.file.size, name: r.item.file.name }, res.options.keep);
+    else { forceNew.add(r.item.file); addFiles([r.item.file], folderId); }
+  }
+  runSearch({ keepScroll: true });
+  updateStorage();
+  const n = [...res.picked].filter((r) => r.item).length;
+  if (n) toast(`Updated ${plural(n, 'document')}`);
+}
+
+// ---------- option 1 + 2: add from a link (a file, or a page listing files) ----------
+function openLinkDialog(folderId, { url = '', helperOpen = false } = {}) {
+  closeMenu();
+  const sel = $('#linkFolder');
+  sel.innerHTML = `<option value="">No folder (or a new folder for a page of documents)</option>` + S.folders.map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join('');
+  sel.value = folderId || '';
+  $('#linkUrl').value = url;
+  $('#helperUrl').value = helper.get();
+  $('#autoCheck').checked = !!prefs.autoCheck;
+  $('#helperState').textContent = helper.get() ? 'set up' : 'not set up';
+  $('#helperState').className = helper.get() ? 'ok' : '';
+  $('#helperBox').open = helperOpen || false;
+  setLinkStatus('');
+  $('#linkGo').disabled = false;
+  $('#linkDlg').showModal();
+  setTimeout(() => (helperOpen ? $('#helperUrl') : $('#linkUrl')).focus(), 50);
+}
+function setLinkStatus(msg, err) {
+  const s = $('#linkStatus');
+  s.textContent = msg;
+  s.classList.toggle('err', !!err);
+}
+
+async function submitLink() {
+  let url = $('#linkUrl').value.trim();
+  if (!url) return;
+  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+  try { url = new URL(url).toString(); } catch { setLinkStatus('That doesn’t look like a web link.', true); return; }
+  const folderId = $('#linkFolder').value || null;
+  $('#linkGo').disabled = true;
+  setLinkStatus('Looking at the link…');
+  try {
+    const info = await remoteInfo(url);
+    if (info.status >= 400) throw new Error(`the site answered ${info.status}`);
+    if (looksLikeDocument(info.finalUrl || url, info.type)) {
+      $('#linkDlg').close();
+      addRemote(url, { folderId, info });
+      toast('Downloading the document…', { ms: 2000 });
+      return;
+    }
+    setLinkStatus('Reading the page…');
+    const { res, finalUrl } = await remoteFetch(url);
+    const html = await res.text();
+    const { links, title } = documentLinks(html, finalUrl || url);
+    $('#linkDlg').close();
+    if (!links.length) {
+      addRemote(url, { folderId, info: { ...info, type: 'text/html' } });
+      toast('No documents are listed on that page, so the page itself was added.');
+      return;
+    }
+    await pickFromPage(url, links, title, folderId);
+  } catch (err) {
+    setLinkStatus(helperProblem(err), true);
+    if (err instanceof NeedsHelper || /helper/i.test(String(err?.message))) $('#helperBox').open = true;
+  } finally {
+    $('#linkGo').disabled = false;
+  }
+}
+
+async function fillSizes(links) {
+  const need = links.filter((l) => !l.shownSize).slice(0, 60);
+  let i = 0;
+  const worker = async () => {
+    while (i < need.length) {
+      const l = need[i++];
+      try { l.shownSize = (await remoteInfo(l.url)).size; } catch {}
+    }
+  };
+  await Promise.all([worker(), worker(), worker(), worker()]);
+}
+
+// A page that lists both a whole book and its chapters: the book is about as big as everything else together.
+function looksLikeWholeBook(link, links) {
+  if (links.length < 4 || !link.shownSize) return false;
+  const others = links.filter((l) => l !== link).reduce((a, l) => a + (l.shownSize || 0), 0);
+  return link.shownSize >= others * 0.55 || /full|complete|entire|whole/i.test(link.text);
+}
+
+async function pickFromPage(pageUrl, links, title, folderId) {
+  const t = toast(`Found ${plural(links.length, 'document')} on the page — checking sizes…`, { ms: Infinity });
+  await fillSizes(links);
+  t._hide();
+  const rows = [{ header: title || 'Documents on this page' }];
+  for (const l of links) {
+    const book = looksLikeWholeBook(l, links);
+    rows.push({ link: l, checked: !book, title: l.text, detail: `${fmtSize(l.shownSize) || 'size unknown'} · ${esc(fileNameFor(l.url))}${book ? ' · <b>looks like the whole book — the chapters below cover the same pages</b>' : ''}` });
+  }
+  const res = await review({
+    title: 'Add documents from this page',
+    intro: 'Pick the documents to add. Pages like the FAA’s list the whole handbook <i>and</i> each chapter — choose one or the other so you don’t get every hit twice.',
+    rows,
+    options: [{ id: 'link', label: 'Keep the folder linked to this page, so “Check for updates” also finds new and replaced documents', checked: true }],
+    apply: 'Add',
+  });
+  if (!res) return;
+  const picked = rows.filter((r) => r.link && res.picked.has(r));
+  if (!picked.length) return;
+  let fid = folderId;
+  if (!fid) fid = createFolder((title || 'Linked documents').split(/\s[|–—-]\s/)[0].slice(0, 80)).id;
+  const f = folderById(fid);
+  if (res.options.link) {
+    f.source = { url: pageUrl, title, ignored: rows.filter((r) => r.link && !res.picked.has(r)).map((r) => r.link.url), checkedAt: Date.now() };
+    saveFolders();
+  }
+  for (const r of picked) addRemote(r.link.url, { folderId: fid, linkText: r.link.text, info: { size: r.link.shownSize } });
+  renderLibrary();
+}
+
+// ---------- checking linked sources for updates ----------
+let checking = false;
+async function checkSources({ docIds = null, folderIds = null, quiet = false } = {}) {
+  if (checking) { toast('Already checking — one moment'); return; }
+  const all = !docIds && !folderIds;
+  const folders = S.folders.filter((f) => f.source && (all || folderIds?.includes(f.id)));
+  const covered = new Set();
+  const jobs = [];      // { doc, url, link? }
+  const rows = [];
+  const add = (header, row) => { if (!rows.some((r) => r.header === header)) rows.push({ header }); rows.splice(lastIndexOfHeader(header) + 1, 0, row); };
+  const lastIndexOfHeader = (header) => {
+    let i = rows.findIndex((r) => r.header === header);
+    while (i + 1 < rows.length && !rows[i + 1].header) i++;
+    return i;
+  };
+  let upToDate = 0;
+  let failures = 0;
+  checking = true;
+  $('#checkAllBtn').classList.add('spin');
+  const t = quiet ? null : toast('Checking linked sources…', { ms: Infinity });
+  const status = (msg) => { if (t) t.firstChild.textContent = msg; };
+
+  try {
+    // pages that list documents: find new, renamed and removed ones
+    for (const f of folders) {
+      status(`Checking “${f.name}”…`);
+      try {
+        const { res, finalUrl } = await remoteFetch(f.source.url);
+        if (!res.ok) throw new Error(`the page answered ${res.status}`);
+        const { links } = documentLinks(await res.text(), finalUrl || f.source.url);
+        const inFolder = S.docs.filter((d) => d.folderId === f.id && d.source && !d.status);
+        const matched = new Set();
+        const fresh = [];
+        for (const l of links) {
+          let d = inFolder.find((x) => x.source.url === l.url);
+          if (d) { matched.add(d); jobs.push({ doc: d, url: l.url, link: l }); continue; }
+          if ((f.source.ignored || []).includes(l.url)) continue;
+          fresh.push(l);
+        }
+        // a link that's new but has the same title or file (minus edition letter) as one that vanished = a new edition
+        for (const l of fresh) {
+          const d = inFolder.find((x) => !matched.has(x) && !links.some((k) => k.url === x.source.url) &&
+            ((x.source.linkText && linkKey(x.source.linkText) === linkKey(l.text)) || editionKey(fileNameFor(x.source.url)) === editionKey(fileNameFor(l.url))));
+          if (d) { matched.add(d); jobs.push({ doc: d, url: l.url, link: l, renamed: true }); }
+          else add('New on the page', { kind: 'new', folder: f, link: l, checked: true, tone: 'up', title: l.text, detail: `${fmtSize(l.shownSize) || ''} ${esc(fileNameFor(l.url))}`.trim() });
+        }
+        for (const d of inFolder) {
+          if (!matched.has(d)) { add('No longer on the page', { info: true, title: d.name, detail: 'Kept in your library. The site may have moved or retired it.' }); covered.add(d); }
+        }
+        inFolder.forEach((d) => covered.add(d));
+        f.source.checkedAt = Date.now();
+      } catch (err) {
+        failures++;
+        add('Couldn’t check', { info: true, tone: 'warn', title: f.name, detail: esc(helperProblem(err)) });
+        S.docs.filter((d) => d.folderId === f.id).forEach((d) => covered.add(d));
+      }
+    }
+    // single linked documents
+    for (const d of S.docs) {
+      if (!d.source || d.status || covered.has(d) || jobs.some((j) => j.doc === d)) continue;
+      if (!all && !docIds?.includes(d.id) && !folderIds?.includes(d.folderId)) continue;
+      jobs.push({ doc: d, url: d.source.url });
+    }
+
+    let n = 0;
+    for (const job of jobs) {
+      n++;
+      const d = job.doc;
+      status(`Checking ${n} of ${jobs.length}: ${d.name}`);
+      try {
+        if (!job.renamed) {
+          const { changed, info } = await remoteChanged(job.url, d.source);
+          if (info?.status >= 400) throw new Error(`the site answered ${info.status}`);
+          if (changed === false) { upToDate++; d.source.checkedAt = Date.now(); continue; }
+        }
+        status(`Downloading ${n} of ${jobs.length}: ${d.name}`);
+        const dl = await download(job.url);
+        if (d.kind !== 'html' && dl.info.type === 'text/html') throw new Error('the link now opens a web page instead of the document');
+        const { pages, bytes } = await readFile(new File([dl.bytes], fileNameFor(dl.info.finalUrl || job.url, dl.info.type), { type: dl.info.type }));
+        const c = compareVersions(d, pages, dl.info.size);
+        const source = { ...d.source, url: job.url, linkText: job.link?.text || d.source.linkText, etag: dl.info.etag, lastModified: dl.info.lastModified, size: dl.info.size, checkedAt: Date.now() };
+        if (c.same) { upToDate++; d.source = source; continue; }
+        add(c.suspicious ? 'Looks wrong — check before updating' : 'Updated on the site', {
+          kind: 'update', doc: d, payload: { pages, bytes, size: dl.info.size, source }, checked: !c.suspicious, tone: c.suspicious ? 'warn' : 'up',
+          title: d.name,
+          detail: `${c.detail}${job.renamed ? ` · new file: ${esc(fileNameFor(job.url))}` : ''}${c.suspicious ? ` — ${c.reasons.join(', ')}` : ''}`,
+        });
+      } catch (err) {
+        failures++;
+        add('Couldn’t check', { info: true, tone: 'warn', title: d.name, detail: esc(helperProblem(err)) });
+      }
+    }
+    // sizes for newly listed documents
+    const fresh = rows.filter((r) => r.kind === 'new');
+    if (fresh.length) {
+      status('Checking sizes of new documents…');
+      await fillSizes(fresh.map((r) => r.link));
+      for (const r of fresh) r.detail = `${fmtSize(r.link.shownSize) || 'size unknown'} · ${esc(fileNameFor(r.link.url))}`;
+    }
+  } finally {
+    checking = false;
+    $('#checkAllBtn').classList.remove('spin');
+    t?._hide();
+    saveFolders();
+    store.updateDocs(S.docs.filter((d) => d.source && !d.status).map(stripMeta)).catch(() => {});
+    renderLibrary();
+  }
+
+  const actionable = rows.filter((r) => r.kind);
+  if (!actionable.length && !rows.length) {
+    if (!quiet) toast(jobs.length || folders.length ? `Everything is up to date (${plural(upToDate, 'document')} checked)` : 'Nothing linked to check yet');
+    return;
+  }
+  if (quiet && !actionable.length && !failures) return;
+  if (upToDate) rows.push({ header: 'Up to date' }, { info: true, title: plural(upToDate, 'document'), detail: 'No changes on the site.' });
+  const res = await review({
+    title: actionable.length ? 'Updates found' : 'Check finished',
+    intro: actionable.length ? 'Ticked items will be applied. Anything that looks wrong is left unticked so you can decide.' : '',
+    rows,
+    options: rows.some((r) => r.kind === 'update') ? [{ id: 'keep', label: 'Keep the old versions too (as “(previous)”, left out of searches)' }] : [],
+    apply: 'Apply',
+  });
+  if (!res) return;
+  let updated = 0;
+  for (const r of rows) {
+    if (r.kind === 'update' && res.picked.has(r)) { await replaceDoc(r.doc, r.payload, res.options.keep); updated++; }
+    if (r.kind === 'new') {
+      if (res.picked.has(r)) addRemote(r.link.url, { folderId: r.folder.id, linkText: r.link.text, info: { size: r.link.shownSize } });
+      else (r.folder.source.ignored ||= []).push(r.link.url); // don't suggest it again
+    }
+  }
+  saveFolders();
+  runSearch({ keepScroll: true });
+  updateStorage();
+  const added = rows.filter((r) => r.kind === 'new' && res.picked.has(r)).length;
+  if (updated || added) toast([updated && `Updated ${plural(updated, 'document')}`, added && `adding ${plural(added, 'new document')}`].filter(Boolean).join(' · '));
+}
+
 // ---------- toasts ----------
 function toast(msg, { action, onAction, ms = 4200 } = {}) {
   const t = el('div', 'toast', `<span>${esc(msg)}</span>`);
@@ -1371,7 +1819,9 @@ function toast(msg, { action, onAction, ms = 4200 } = {}) {
   const box = $('#toasts');
   box.append(t);
   while (box.children.length > 3) box.firstElementChild.remove();
-  setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 300); }, ms);
+  t._hide = () => { t.classList.add('out'); setTimeout(() => t.remove(), 300); };
+  if (ms !== Infinity) setTimeout(t._hide, ms);
+  return t;
 }
 
 // ---------- theme ----------
@@ -1414,6 +1864,29 @@ function bind() {
   $('#addBtn').addEventListener('click', () => pickFiles(null));
   $('#addMoreBtn').addEventListener('click', (e) => { e.stopPropagation(); addMenu(e.currentTarget); });
   $('#newFolderBtn').addEventListener('click', () => { const f = createFolder(); startRename(f.id); });
+  $('#checkAllBtn').addEventListener('click', () => checkSources());
+  $('#linkForm').addEventListener('submit', (e) => { e.preventDefault(); submitLink(); });
+  $('#linkDlg').addEventListener('click', (e) => { if (e.target === e.currentTarget || e.target.closest('[data-close]')) $('#linkDlg').close(); });
+  $('#autoCheck').addEventListener('change', (e) => { prefs.autoCheck = e.target.checked; savePrefs(); });
+  $('#helperTest').addEventListener('click', async () => {
+    const v = $('#helperUrl').value.trim();
+    helper.set(v);
+    $('#helperState').textContent = v ? 'testing…' : 'not set up';
+    $('#helperState').className = '';
+    if (!v) return;
+    try {
+      const res = await fetch(v, { cache: 'no-store' });
+      const text = await res.text();
+      if (!res.ok || !/download helper/i.test(text)) throw new Error('unexpected answer');
+      $('#helperState').textContent = 'working ✓';
+      $('#helperState').className = 'ok';
+      setLinkStatus('Download helper is working. Try your link again.');
+      try { localStorage.removeItem('instant-search:direct'); } catch {}
+    } catch {
+      $('#helperState').textContent = 'not reachable';
+      setLinkStatus('The helper didn’t answer. Check the address (it ends in .workers.dev) and that the worker is deployed.', true);
+    }
+  });
   document.addEventListener('click', (e) => { if (!e.target.closest('.pop-menu')) closeMenu(); });
   addEventListener('resize', closeMenu);
   $('.sidebar').addEventListener('scroll', closeMenu, true);
@@ -2249,6 +2722,11 @@ async function start() {
   runSearch();
   applyZoom();
   updateStorage();
+  if (prefs.autoCheck && hasSources() && Date.now() - (prefs.lastAutoCheck || 0) > 20 * 3600e3) {
+    prefs.lastAutoCheck = Date.now();
+    savePrefs();
+    setTimeout(() => checkSources({ quiet: true }), 1500);
+  }
   document.body.classList.add('ready');
   navigator.storage?.persist?.().catch(() => {});
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
