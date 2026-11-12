@@ -12,6 +12,31 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ESC[c]);
 const fmt = (n) => n.toLocaleString();
+// Only touch the page when the content really changed: rebuilding an element under the mouse
+// restarts its hover effect, which looks like flickering.
+function setHTML(node, html) {
+  if (node._html === html) return;
+  node.innerHTML = html;
+  node._html = html;
+}
+// Update a list in place: keep children that didn't change, swap only those that did.
+function morphChildren(parent, next, keyOf) {
+  const old = new Map();
+  for (const c of [...parent.children]) old.set(keyOf(c), c);
+  const want = [];
+  for (const n of [...next.children]) {
+    const k = keyOf(n);
+    const o = old.get(k);
+    old.delete(k);
+    if (!o) { want.push(n); continue; }
+    if (o.outerHTML === n.outerHTML) { want.push(o); continue; }
+    if (o._morph) { o._morph(o, n); want.push(o); continue; }
+    o.replaceWith(n);
+    want.push(n);
+  }
+  for (const o of old.values()) o.remove();
+  want.forEach((c, i) => { if (parent.children[i] !== c) parent.insertBefore(c, parent.children[i] || null); });
+}
 const plural = (n, one, many = one + 's') => `${fmt(n)} ${n === 1 ? one : many}`;
 function el(tag, cls, html) {
   const e = document.createElement(tag);
@@ -140,10 +165,16 @@ function runSearch({ keepScroll = false } = {}) {
   S.matcher = m && !m.error ? m : null;
   S.terms = S.matcher ? S.matcher.terms : [];
 
+  const before = { sig: resultsSig(), cur: results.cur, navY: results.navY, dirty: results.dirty, state: resultsState() };
   assign(results, computeHits(orderedDocs().filter((d) => d.enabled && searchable(d))));
-  results.revealed.clear();
-  results.dirty = true;
-  if (active === results) renderView(results, { keepScroll });
+  if (keepScroll && !before.dirty && before.sig === resultsSig() && before.state === resultsState() && results.list.length) {
+    results.cur = before.cur; // same results: keep the page as it is, including opened pages and the current hit
+    results.navY = before.navY;
+  } else {
+    results.revealed.clear();
+    results.dirty = true;
+    if (active === results) renderView(results, { keepScroll });
+  }
 
   if (reader.docId) {
     const doc = docById(reader.docId);
@@ -152,6 +183,14 @@ function runSearch({ keepScroll = false } = {}) {
     else reader.dirty = true;
   }
   updateChrome();
+}
+
+function resultsSig() {
+  return prefs.sort + '§' + results.list.map((R) => `${R.doc.id}:${R.doc.name}:${R.doc.hash || ''}:${R.doc.folderId || ''}:${R.pages.map((p) => p.n + '/' + p.ranges.length).join(',')}`).join('|');
+}
+// what the results area shows when there are no results lists (library empty, idle, error…)
+function resultsState() {
+  return [S.docs.length, !!S.error, !!S.matcher, S.docs.filter((d) => d.enabled && searchable(d)).length].join(',');
 }
 
 let searchTimer;
@@ -825,7 +864,7 @@ function updateSummary() {
   // when the toolbar is minimized, the word chips ride along above the results instead
   const termsUp = !(prefs.compact && v.kind === 'results');
   if (termsUp) html += terms;
-  box.innerHTML = html;
+  setHTML(box, html);
   box.hidden = !html;
 
   const head = $('#resultsHead');
@@ -835,7 +874,7 @@ function updateSummary() {
     const pages = v.list.reduce((a, R) => a + R.pages.length, 0);
     const docCount = new Set(v.list.map((R) => R.doc.id)).size;
     const scope = S.docs.filter((d) => d.enabled && searchable(d)).length;
-    $('#stat').innerHTML = `<span><b>${fmt(v.total)}</b> ${v.total === 1 ? 'hit' : 'hits'} on <b>${fmt(pages)}</b> ${pages === 1 ? 'page' : 'pages'} in <b>${fmt(docCount)}</b> of ${plural(scope, 'document')}</span>${termsUp ? '' : terms}`;
+    setHTML($('#stat'), `<span><b>${fmt(v.total)}</b> ${v.total === 1 ? 'hit' : 'hits'} on <b>${fmt(pages)}</b> ${pages === 1 ? 'page' : 'pages'} in <b>${fmt(docCount)}</b> of ${plural(scope, 'document')}</span>${termsUp ? '' : terms}`);
   }
   const dock = $('#dock');
   dock.hidden = !(v.kind === 'reader' || showHead);
@@ -846,7 +885,7 @@ function updateSummary() {
 function updateOutline() {
   const box = $('#outline');
   const v = active;
-  if (!S.matcher || !v.list.length) { box.innerHTML = ''; box.hidden = true; return; }
+  if (!S.matcher || !v.list.length) { setHTML(box, ''); box.hidden = true; return; }
   box.hidden = false;
   if (v.list[0]?.flat) {
     const rows = v.list.slice(0, 400).map((R, i) => {
@@ -854,23 +893,34 @@ function updateOutline() {
       return `<button class="ol-row" data-doc="${R.doc.id}" data-n="${p.n}" title="${esc(R.doc.name)} · page ${p.n + 1}"><span class="ol-rank">${i + 1}</span><span class="ol-where"><b>p. ${p.n + 1}</b><span>${esc(R.doc.name)}</span></span><em>${fmt(R.hits)}</em></button>`;
     }).join('');
     const more = v.list.length > 400 ? `<span class="ol-more">+${fmt(v.list.length - 400)} more pages</span>` : '';
-    box.innerHTML = `<div class="ol-title">Pages by hits</div><div class="ol-rows">${rows}${more}</div>`;
+    setHTML(box, `<div class="ol-title">Pages by hits</div><div class="ol-rows">${rows}${more}</div>`);
     trackPosition();
     return;
   }
-  box.innerHTML = `<div class="ol-title">${v.kind === 'reader' ? 'Pages with hits' : 'Jump to'}</div>` + v.list.map((R) => {
+  setHTML(box, `<div class="ol-title">${v.kind === 'reader' ? 'Pages with hits' : 'Jump to'}</div>` + v.list.map((R) => {
     const chips = R.pages.slice(0, 500).map((p) => `<button class="ol-p" data-doc="${R.doc.id}" data-n="${p.n}" title="Page ${p.n + 1} · ${plural(p.ranges.length, 'hit')}">${p.n + 1}${p.ranges.length > 1 ? `<sup>${p.ranges.length}</sup>` : ''}</button>`).join('');
     const more = R.pages.length > 500 ? `<span class="ol-more">+${fmt(R.pages.length - 500)}</span>` : '';
     const name = v.kind === 'reader' ? '' : `<button class="ol-doc" data-doc="${R.doc.id}" data-n="${R.pages[0].n}"><span>${esc(R.doc.name)}</span><em>${fmt(R.hits)}</em></button>`;
     return `<div class="ol-group">${name}<div class="ol-pages">${chips}${more}</div></div>`;
-  }).join('');
+  }).join(''));
   trackPosition();
+}
+
+const progressText = (d) => `${d.phase === 'download' ? 'Downloading' : 'Reading'}… ${d.progress ? Math.round(d.progress * 100) + '%' : ''}`;
+// While a file downloads or reads, only its own text and bar change — nothing else in the library is touched.
+function showProgress(d) {
+  const li = $(`#lib .lib-item[data-id="${d.id}"]`);
+  const t = li?.querySelector('.ptext');
+  const bar = li?.querySelector('.prog i');
+  if (!t || !bar) { renderLibrary(); return; }
+  t.textContent = progressText(d);
+  bar.style.width = Math.round((d.progress || 0) * 100) + '%';
 }
 
 function docItemHtml(d, hits) {
   const count = S.texts.get(d.id)?.length || d.pages || 0;
   const meta = d.status === 'indexing'
-    ? `${d.phase === 'download' ? 'Downloading' : 'Reading'}… ${d.progress ? Math.round(d.progress * 100) + '%' : ''}`
+    ? `<span class="ptext">${progressText(d)}</span>`
     : `${d.source ? `<span class="linked" title="${esc(sourceTitle(d.source))}">${I.link}</span>` : ''}${plural(count, 'page')}${d.updatedAt && Date.now() - d.updatedAt < 14 * 864e5 ? ' · <span class="fresh-tag">updated</span>' : ''}${d.noText ? ' · <span class="warn">no text found</span>' : ''}`;
   const h = S.matcher && d.enabled && !d.status ? `<span class="lhits${hits.get(d.id) ? '' : ' zero'}">${fmt(hits.get(d.id) || 0)}</span>` : '';
   return `<li class="lib-item${d.enabled ? ' on' : ''}${d.status ? ' busy' : ''}${reader.docId === d.id && active === reader ? ' reading' : ''}" data-id="${d.id}" draggable="${d.status ? 'false' : 'true'}">
@@ -911,8 +961,24 @@ function renderLibrary() {
       <ul class="folder-docs">${docs.length ? docs.map((d) => docItemHtml(d, hits)).join('') : '<li class="folder-empty">Drag documents here, or use + to add files</li>'}</ul>
     </li>`;
   }).join('');
-  ul.innerHTML = folderHtml + loose.map((d) => docItemHtml(d, hits)).join('');
+  const next = document.createElement('ul');
+  next.innerHTML = folderHtml + loose.map((d) => docItemHtml(d, hits)).join('');
+  // folders are updated piece by piece (their row, then each document in them)
+  const keyOf = (n) => n.dataset.id ? 'd' + n.dataset.id : n.dataset.fid ? 'f' + n.dataset.fid : 'x' + n.className;
+  const morphFolder = (o, n) => {
+    o.className = n.className;
+    const or = o.querySelector(':scope > .folder-row');
+    const nr = n.querySelector(':scope > .folder-row');
+    if (or.outerHTML !== nr.outerHTML) or.replaceWith(nr);
+    morphChildren(o.querySelector(':scope > .folder-docs'), n.querySelector(':scope > .folder-docs'), keyOf);
+  };
+  for (const f of next.querySelectorAll(':scope > .folder')) f._morph = morphFolder;
+  for (const f of ul.querySelectorAll(':scope > .folder')) f._morph = morphFolder;
+  // the checkbox "checked" state lives in a property; keep the markup in step so comparisons work
+  $$('input[type="checkbox"]', ul).forEach((i) => i.toggleAttribute('checked', i.checked));
+  morphChildren(ul, next, keyOf);
   $$('[data-indet]', ul).forEach((i) => (i.indeterminate = true));
+  $$('input[type="checkbox"]:not([data-indet])', ul).forEach((i) => (i.indeterminate = false));
   if (renaming) {
     const span = $(`.folder[data-fid="${renaming.fid}"] .fname`, ul);
     if (span) {
@@ -938,8 +1004,9 @@ function syncControls() {
   document.body.classList.toggle('side-hidden', !!prefs.sideHidden);
   $('#compactBtn').title = prefs.compact ? `Show the full toolbar (${keyHint('toggleCompact')})` : `Minimize the toolbar (${keyHint('toggleCompact')})`;
   const flags = [prefs.matchCase ? 'Aa' : '', prefs.wholeWord && prefs.mode !== 'regex' ? '<u>ab</u>' : '', prefs.mode === 'near' ? `≤${prefs.near}` : ''].filter(Boolean);
-  $('#modePill').innerHTML = `<span class="full">${MODE_SHORT[prefs.mode]}</span><span class="short">${MODE_TINY[prefs.mode]}</span>${flags.map((f) => `<em>${f}</em>`).join('')}<svg viewBox="0 0 24 24"><path d="M8 10l4 4 4-4"/></svg>`;
-  $('#mMode').innerHTML = $('#modePill').innerHTML;
+  const pill = `<span class="full">${MODE_SHORT[prefs.mode]}</span><span class="short">${MODE_TINY[prefs.mode]}</span>${flags.map((f) => `<em>${f}</em>`).join('')}<svg viewBox="0 0 24 24"><path d="M8 10l4 4 4-4"/></svg>`;
+  setHTML($('#modePill'), pill);
+  setHTML($('#mMode'), pill);
   $('#zoomVal').textContent = Math.round(zoomValue() * 100) + '%';
   $('#fitWidth').setAttribute('aria-pressed', String(prefs.zoom === 'width'));
   $('#fitPage').setAttribute('aria-pressed', String(prefs.zoom === 'page'));
@@ -1350,7 +1417,7 @@ async function ingest(file, meta) {
     const { pages, bytes } = await readFile(file, (n, total) => {
       meta.progress = n / total;
       const now = performance.now();
-      if (now - last > 120) { last = now; renderLibrary(); }
+      if (now - last > 120) { last = now; showProgress(meta); }
     });
     const chars = pages.reduce((a, p) => a + p.trim().length, 0);
     meta.pages = pages.length;
@@ -1431,7 +1498,7 @@ function addRemote(url, { folderId = null, linkText = '', note = '', info = null
       const dl = await download(url, (f) => {
         meta.progress = f;
         const now = performance.now();
-        if (now - last > 150) { last = now; renderLibrary(); }
+        if (now - last > 150) { last = now; showProgress(meta); }
       });
       if (kind !== 'html' && dl.info.type === 'text/html') throw new Error('the link opened a web page instead of a document');
       meta.phase = 'read';
