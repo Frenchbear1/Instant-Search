@@ -2517,6 +2517,15 @@ function bind() {
   $('#menuBtn').addEventListener('click', toggleLibrary);
   $('#scrim').addEventListener('click', closeDrawer);
 
+  // keep the floating zoom bar centred on the pages themselves (not the whole window)
+  const placeDock = () => {
+    const r = $('.col').getBoundingClientRect();
+    if (r.width) $('#dock').style.left = `${Math.round(r.left + r.width / 2)}px`;
+  };
+  new ResizeObserver(placeDock).observe($('.col'));
+  addEventListener('resize', placeDock);
+  placeDock();
+
   // keep the sticky offset accurate
   new ResizeObserver(() => {
     document.documentElement.style.setProperty('--top-h', $('.topbar').offsetHeight + 'px');
