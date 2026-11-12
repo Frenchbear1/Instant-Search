@@ -1320,8 +1320,80 @@ function deleteFolder(fid) {
 
 // ---------- popover menu ----------
 function closeMenu() {
-  $('.pop-menu')?.remove();
+  $$('.pop-menu').forEach((m) => m.remove());
   $$('.menu-open').forEach((x) => x.classList.remove('menu-open'));
+}
+// Small screens and touch: a submenu replaces the menu (with Back). Laptops: it opens beside it on hover.
+const compactMenus = () => matchMedia('(max-width: 700px), (pointer: coarse)').matches;
+
+function fillMenu(m, items, { onBack } = {}) {
+  m.replaceChildren();
+  if (onBack) {
+    const back = el('button', 'menu-item menu-back', `${I.arrowLeft}<span>Back</span>`);
+    back.addEventListener('click', (e) => { e.stopPropagation(); onBack(); });
+    m.append(back, el('div', 'menu-sep'));
+  }
+  for (const it of items) {
+    if (it.sep) { m.append(el('div', 'menu-sep')); continue; }
+    if (it.header) { m.append(el('div', 'menu-head', esc(it.header))); continue; }
+    const b = el('button', `menu-item${it.danger ? ' danger' : ''}${it.checked ? ' checked' : ''}${it.submenu ? ' has-sub' : ''}`,
+      `${it.icon || '<span class="menu-gap"></span>'}<span>${esc(it.label)}</span>${it.checked ? I.check : ''}${it.submenu ? `<i class="sub-arrow">${I.chevron}</i>` : ''}`);
+    b.setAttribute('role', 'menuitem');
+    if (it.disabled) b.disabled = true;
+    if (it.submenu) {
+      b.setAttribute('aria-haspopup', 'menu');
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (compactMenus()) {
+          const prev = items;
+          fillMenu(m, it.submenu(), { onBack: () => { fillMenu(m, prev, { onBack }); placeMenu(m); } });
+          placeMenu(m);
+          m.querySelector('.menu-item:not(:disabled)')?.focus({ preventScroll: true });
+        } else openSubmenu(m, b, it.submenu());
+      });
+      b.addEventListener('mouseenter', () => { if (!compactMenus()) { clearTimeout(m._closeT); openSubmenu(m, b, it.submenu()); } });
+    } else {
+      // small delay so moving the mouse diagonally toward the side window doesn't close it
+      b.addEventListener('mouseenter', () => { if (!compactMenus() && m._sub) { clearTimeout(m._closeT); m._closeT = setTimeout(() => closeSubmenu(m), 260); } });
+      b.addEventListener('click', (e) => { e.stopPropagation(); closeMenu(); it.run(); });
+    }
+    m.append(b);
+  }
+}
+function placeMenu(m) {
+  const r = m._anchor.getBoundingClientRect();
+  const w = m.offsetWidth;
+  const h = m.offsetHeight;
+  let top = r.bottom + 6;
+  if (top + h > innerHeight - 8) top = Math.max(8, r.top - h - 6);
+  m.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + 'px';
+  m.style.top = top + 'px';
+}
+function closeSubmenu(parent) {
+  parent._sub?.remove();
+  parent._sub = null;
+  parent._subFor = null;
+  parent.querySelectorAll('.has-sub.open').forEach((x) => x.classList.remove('open'));
+}
+function openSubmenu(parent, item, items) {
+  if (parent._sub && parent._subFor === item) return;
+  closeSubmenu(parent);
+  const sm = el('div', 'pop-menu sub');
+  sm.setAttribute('role', 'menu');
+  fillMenu(sm, items);
+  document.body.append(sm);
+  parent._sub = sm;
+  parent._subFor = item;
+  sm.addEventListener('mouseenter', () => clearTimeout(parent._closeT));
+  item.classList.add('open');
+  const r = item.getBoundingClientRect();
+  const pr = parent.getBoundingClientRect();
+  const w = sm.offsetWidth;
+  const h = sm.offsetHeight;
+  let left = pr.right + 4;
+  if (left + w > innerWidth - 8) left = Math.max(8, pr.left - w - 4); // no room on the right: open to the left
+  sm.style.left = left + 'px';
+  sm.style.top = Math.max(8, Math.min(r.top - 6, innerHeight - h - 8)) + 'px';
 }
 function openMenu(anchor, items) {
   const wasOpen = anchor.classList.contains('menu-open');
@@ -1329,28 +1401,13 @@ function openMenu(anchor, items) {
   if (wasOpen) return;
   const m = el('div', 'pop-menu');
   m.setAttribute('role', 'menu');
-  for (const it of items) {
-    if (it.sep) { m.append(el('div', 'menu-sep')); continue; }
-    if (it.header) { m.append(el('div', 'menu-head', esc(it.header))); continue; }
-    const b = el('button', `menu-item${it.danger ? ' danger' : ''}${it.checked ? ' checked' : ''}`, `${it.icon || '<span class="menu-gap"></span>'}<span>${esc(it.label)}</span>${it.checked ? I.check : ''}`);
-    b.setAttribute('role', 'menuitem');
-    if (it.disabled) b.disabled = true;
-    b.addEventListener('click', (e) => { e.stopPropagation(); closeMenu(); it.run(); });
-    m.append(b);
-  }
+  m._anchor = anchor;
+  fillMenu(m, items);
   document.body.append(m);
   anchor.classList.add('menu-open');
-  const r = anchor.getBoundingClientRect();
-  const w = m.offsetWidth;
-  const h = m.offsetHeight;
-  let left = Math.min(r.left, innerWidth - w - 8);
-  let top = r.bottom + 6;
-  if (top + h > innerHeight - 8) top = Math.max(8, r.top - h - 6);
-  m.style.left = Math.max(8, left) + 'px';
-  m.style.top = top + 'px';
+  placeMenu(m);
   m.querySelector('.menu-item:not(:disabled)')?.focus({ preventScroll: true });
 }
-
 function moveItems(d) {
   const items = [{ header: 'Move to' }];
   for (const f of S.folders) items.push({ label: f.name, icon: I.folder, checked: d.folderId === f.id, run: () => moveDocs([d.id], f.id) });
@@ -1382,7 +1439,7 @@ function docMenu(anchor, id) {
     ] : []),
     { sep: true },
     { label: 'Move up or down…', icon: I.arrows, disabled: !!d.status, run: () => setTimeout(() => openMenu(anchor, moveMenuItems('doc', id)), 0) },
-    ...moveItems(d),
+    { label: 'Move to folder', icon: I.folder, submenu: () => moveItems(d).slice(1) },
     { sep: true },
     { label: 'Remove from library', icon: I.trash, danger: true, run: () => removeDoc(id) },
   ]);

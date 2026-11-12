@@ -784,3 +784,10 @@ dialog[open] { animation: dlg 0.2s ease-out; }
 .ol-sort { flex: none; }
 
 .lib-item[draggable="true"] :is(.lib-acts, .arrange-btns, .chk, .mini, input) { cursor: pointer; }
+
+.menu-item .sub-arrow { display: grid; place-items: center; margin-left: auto; color: var(--muted); }
+.menu-item .sub-arrow svg { width: 13px; height: 13px; }
+.menu-item.has-sub.open { background: var(--accent-soft); }
+.pop-menu.sub { z-index: 121; min-width: 190px; }
+.menu-back { color: var(--accent); font-weight: 600; }
+.menu-back svg { color: var(--accent) !important; }
