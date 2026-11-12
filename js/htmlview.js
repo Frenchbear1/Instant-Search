@@ -30,6 +30,7 @@ addEventListener('message',function(e){if(e.source!==P||!e.data||e.data.__is!==1
 if(m.type==='hello'){ID=m.id;unmark();if(m.zoom&&m.zoom!==1)document.documentElement.style.zoom=String(m.zoom);P.postMessage({__is:1,type:'texts',id:ID,texts:collect()},'*')}
 else if(m.type==='marks'){apply(m.list);go(m.ordinal||0,m.frac||0);P.postMessage({__is:1,type:'done',id:ID,count:marks.length},'*')}
 else if(m.type==='fulltext'){P.postMessage({__is:1,type:'fulltext',id:m.id,text:document.body?document.body.innerText:''},'*')}
+else if(m.type==='goto'){go(m.ordinal||0,0)}
 else if(m.type==='zoom'){document.documentElement.style.zoom=String(m.zoom||1)}});
 document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[href]');if(a){e.preventDefault()}},true);
 document.addEventListener('submit',function(e){e.preventDefault()},true);
@@ -105,7 +106,10 @@ export async function renderHtmlPage({ docId, n, pageCount, host, matcher, ordin
     frame.addEventListener('load', () => setTimeout(hello, 400), { once: true });
   });
   show();
-  return () => { waiting.delete(frame.contentWindow); frame.remove(); };
+  const win = frame.contentWindow;
+  const cleanup = () => { waiting.delete(win); frame.remove(); };
+  cleanup.goto = (ordinal) => win?.postMessage({ __is: 1, id, type: 'goto', ordinal }, '*');
+  return cleanup;
 }
 
 /**

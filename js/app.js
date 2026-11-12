@@ -263,11 +263,47 @@ const override = new Map(); // per-page Text/Original choice
 const hasOriginal = (doc) => doc.kind === 'pdf' || doc.kind === 'html';
 function pageMode(doc, n) {
   if (!hasOriginal(doc)) return 'text';
-  const o = override.get(pkey(doc.id, n));
+  const o = override.get(doc.kind === 'html' ? pkey(doc.id, WEB) : pkey(doc.id, n));
   if (o) return o;
   // a PDF page with no extractable text (a scan) is only useful as the original
   if (doc.kind === 'pdf' && !(S.texts.get(doc.id)?.[n] || '').trim()) return 'original';
   return prefs.view;
+}
+// An HTML document shown as the real web page is one card, not one per page: the page loads once and
+// moving between hits scrolls inside it. (In the "pages with most hits" ranking each entry stays its own card.)
+const WEB = 'web';
+const webMode = (doc, R) => doc.kind === 'html' && !R?.flat && pageMode(doc, 0) === 'original';
+const artFor = (v, docId, n) => v.pageEls.get(pkey(docId, n)) || v.pageEls.get(pkey(docId, WEB));
+function webR(v, doc) { return v.list.find((r) => r.doc.id === doc.id && !r.flat) || null; }
+function webHeadHtml(v, doc) {
+  const R = webR(v, doc);
+  const badge = R ? `<span class="phits">${plural(R.hits, 'hit')}</span>` : '';
+  return `<span class="pno">Web page</span>${badge}<span class="grow"></span><button class="chip-btn" data-act="pmode" title="Show the page’s text instead, split into pages">${I.text}Text</button>`;
+}
+function webEl(v, doc, R) {
+  const art = el('article', `page web${R ? ' hit' : ''}`);
+  art.dataset.doc = doc.id;
+  art.dataset.n = R?.pages[0]?.n ?? 0;
+  art._v = v;
+  art._web = true;
+  const body = el('div', 'page-body');
+  body.style.height = HTML_FRAME_H() + 'px';
+  art.append(el('header', 'page-head', webHeadHtml(v, doc)), body);
+  v.pageEls.set(pkey(doc.id, WEB), art);
+  io.observe(art);
+  ioFar.observe(art);
+  return art;
+}
+// Hit k counted among the highlights the web page shows (every occurrence of the search words, in order).
+function webOrdinal(v, k) {
+  const loc = locate(v, k);
+  if (!loc) return 0;
+  const pages = S.texts.get(loc.R.doc.id) || [];
+  let before = 0;
+  for (let m = 0; m < loc.p.n; m++) before += S.matcher.soft(pages[m]).length;
+  const start = loc.p.ranges[k - loc.p.h0]?.[0];
+  const within = S.matcher.soft(pages[loc.p.n] || '').findIndex((r) => r[0] === start);
+  return before + Math.max(0, within);
 }
 const HTML_FRAME_H = () => Math.round(Math.min(innerHeight * 0.78, 1000));
 
@@ -282,9 +318,9 @@ function htmlOrdinal(doc, n, ranges) {
   return before + Math.max(0, within);
 }
 
-function estimate(doc, n) {
+function estimate(doc, n, mode = pageMode(doc, n)) {
   const z = zoomValue();
-  if (pageMode(doc, n) === 'original') return doc.kind === 'html' ? HTML_FRAME_H() + 44 : Math.round(BASE_W * z * S.pageAspect) + 56;
+  if (mode === 'original') return doc.kind === 'html' ? HTML_FRAME_H() + 44 : Math.round(BASE_W * z * S.pageAspect) + 56;
   const chars = (S.texts.get(doc.id)?.[n] || '').length;
   return Math.max(150, Math.round(chars * S.pxPerChar * z) + 80);
 }
@@ -304,7 +340,7 @@ const ioFar = new IntersectionObserver(
   { rootMargin: '5000px 0px' }
 );
 
-function headHtml(v, doc, n, ctx) {
+function headHtml(v, doc, n, ctx, flat = false) {
   const info = v.info.get(pkey(doc.id, n));
   const count = S.texts.get(doc.id)?.length || 0;
   let badge = '';
@@ -312,7 +348,9 @@ function headHtml(v, doc, n, ctx) {
   else if (info) badge = `<span class="phits">${plural(info.ranges.length, 'hit')}</span>`;
   else if (v.kind === 'results') badge = '<span class="phits none">No hits</span>';
   const mode = pageMode(doc, n);
-  const toggle = hasOriginal(doc)
+  const toggle = flat && doc.kind === 'html'
+    ? `<button class="chip-btn" data-act="web" title="Open the real web page at this hit">${I.image}Web page</button>`
+    : hasOriginal(doc)
     ? `<button class="chip-btn" data-act="pmode" title="Switch between extracted text and the original page">${mode === 'original' ? I.text + 'Text' : I.image + 'Original'}</button>`
     : '';
   const open = v.kind === 'results'
@@ -329,9 +367,10 @@ function pageEl(v, doc, n, R) {
   art.dataset.n = n;
   art._v = v;
   art._ctx = ctx;
-  const head = el('header', 'page-head', headHtml(v, doc, n, ctx));
+  art._flat = !!R?.flat;
+  const head = el('header', 'page-head', headHtml(v, doc, n, ctx, !!R?.flat));
   const body = el('div', 'page-body');
-  body.style.height = estimate(doc, n) + 'px';
+  body.style.height = (art._flat && doc.kind === 'html' ? estimate(doc, n, 'text') : estimate(doc, n)) + 'px';
   art.append(head, body);
   v.pageEls.set(ctx ? `${pkey(doc.id, n)}@${groupKey(R, doc)}` : pkey(doc.id, n), art);
   io.observe(art);
@@ -347,6 +386,8 @@ function fill(art) {
   const body = art.lastElementChild;
   if (!doc) return Promise.resolve();
   const text = S.texts.get(doc.id)?.[n] || '';
+  // in the "pages with most hits" ranking an HTML page is shown as text; its web page opens once from the button
+  const mode = art._flat && doc.kind === 'html' ? 'text' : pageMode(doc, n);
   const ranges = pageRanges(v, doc.id, n, text, art._ctx);
   const token = (art._token = (art._token || 0) + 1);
   // The old content (if any) stays on screen until the new one is ready, then gets released.
@@ -354,12 +395,13 @@ function fill(art) {
   const showLoading = () => { if (!body.childElementCount) body.classList.add('loading'); };
 
   art._filled = (async () => {
-    if (pageMode(doc, n) === 'original' && doc.kind === 'html') {
+    if (mode === 'original' && doc.kind === 'html') {
       showLoading();
       try {
         const cleanup = await renderHtmlPage({
-          docId: doc.id, n, pageCount: S.texts.get(doc.id)?.length || 1, host: body,
-          matcher: S.matcher, ordinal: htmlOrdinal(doc, n, ranges), zoom: zoomValue(), base: doc.source?.url || doc.baseUrl || '',
+          docId: doc.id, n: art._web ? 0 : n, pageCount: art._web ? 1 : S.texts.get(doc.id)?.length || 1, host: body,
+          matcher: S.matcher, zoom: zoomValue(),
+          ordinal: art._web ? (() => { const R = webR(v, doc); if (!R || !S.matcher) return 0; const k = v.cur >= R.hitStart && v.cur < R.hitStart + R.hits ? v.cur : R.hitStart; return webOrdinal(v, k); })() : htmlOrdinal(doc, n, ranges), base: doc.source?.url || doc.baseUrl || '',
         });
         if (token !== art._token) { cleanup(); return; }
         art._cleanup = cleanup;
@@ -386,7 +428,7 @@ function fill(art) {
         swapped();
       }
       body.classList.remove('loading');
-    } else if (pageMode(doc, n) === 'original') {
+    } else if (mode === 'original') {
       showLoading();
       try {
         const pdf = await getPdf(doc.id, () => store.file(doc.id));
@@ -412,7 +454,7 @@ function fill(art) {
       swapped();
     }
     body.style.height = '';
-    if (pageMode(doc, n) === 'text' && text.length > 600) {
+    if (mode === 'text' && text.length > 600) {
       const ratio = (body.offsetHeight - 40) / text.length / zoomValue();
       if (ratio > 0.05 && ratio < 2) S.pxPerChar = S.pxPerChar * 0.8 + ratio * 0.2;
     }
@@ -440,7 +482,7 @@ function refill(art) {
   const n = Number(art.dataset.n);
   const info = art._ctx ? null : v.info.get(pkey(doc.id, n));
   art.classList.toggle('hit', !!info);
-  art.firstElementChild.innerHTML = headHtml(v, doc, n, art._ctx);
+  art.firstElementChild.innerHTML = art._web ? webHeadHtml(v, doc) : headHtml(v, doc, n, art._ctx, art._flat);
   const wasFilled = !!art._filled;
   const body = art.lastElementChild;
   // keep what's on screen; it's released once the new version has been swapped in
@@ -491,6 +533,7 @@ function gapEl(doc, a, b, count, R) {
 }
 
 function nodesBetween(v, doc, vis, a, b, R) {
+  if (webMode(doc, R)) return a < 0 ? [webEl(v, doc, R)] : [];
   const count = S.texts.get(doc.id)?.length || 0;
   const nodes = [];
   let prev = a;
@@ -530,7 +573,8 @@ function docHeadHtml(v, doc, R) {
     const rank = v.list.indexOf(R) + 1;
     return `<span class="rank">${fmt(rank)}</span><span class="ftype ${doc.kind}">${KIND_LABEL[doc.kind] || 'TXT'}</span><h2 title="${esc(doc.name)}">${esc(doc.name)}</h2><span class="dstat"><b>${plural(R.hits, 'hit')}</b> on page ${fmt(R.pages[0].n + 1)} of ${fmt(count)}</span><span class="grow"></span>`;
   }
-  const stat = R
+  const stat = R && webMode(doc, R) ? `<b>${plural(R.hits, 'hit')}</b>`
+    : R
     ? `<b>${plural(R.hits, 'hit')}</b> on ${plural(R.pages.length, 'page')} of ${fmt(count)}`
     : S.matcher ? `No hits · ${plural(count, 'page')}` : plural(count, 'page');
   const btn = v.kind === 'results'
@@ -734,10 +778,18 @@ async function goTo(v, k, { instant = false } = {}) {
   updateCounter();
   const loc = locate(v, k);
   if (!loc) return;
-  const art = v.pageEls.get(pkey(loc.R.doc.id, loc.p.n));
+  const art = artFor(v, loc.R.doc.id, loc.p.n);
   if (!art) return;
   await fill(art);
   if (v.cur !== k) return;
+  if (art._web) {
+    // scroll inside the page; only move the list if the page card isn't fully on screen
+    art._cleanup?.goto?.(webOrdinal(v, k));
+    const r = art.getBoundingClientRect();
+    if (r.top < topOffset() - 4 || r.bottom > innerHeight + 4) v.navY = scrollToEl(art, r.height > innerHeight - topOffset() ? 'start' : 'center', instant ? 'instant' : undefined);
+    else v.navY = scrollY;
+    return;
+  }
   const target = markCurrent(v) || art;
   const startY = scrollY;
   v.navY = scrollToEl(target, 'center', instant ? 'instant' : undefined);
@@ -774,7 +826,7 @@ function startFromViewport(v, dir) {
     const mid = (lo + hi) >> 1;
     const p = arts[mid];
     const R = v.list.find((r) => r.pages.includes(p));
-    const a = v.pageEls.get(pkey(R.doc.id, p.n));
+    const a = artFor(v, R.doc.id, p.n);
     const rect = a ? a.getBoundingClientRect() : { bottom: 0 };
     if (rect.bottom > top + 40) { idx = mid; hi = mid - 1; } else lo = mid + 1;
   }
@@ -806,7 +858,11 @@ function stepColor(color) {
 }
 
 async function scrollToPage(v, docId, n) {
-  let art = v.pageEls.get(pkey(docId, n));
+  let art = artFor(v, docId, n);
+  if (art?._web) {
+    const p = v.info.get(pkey(docId, n));
+    if (p) { goTo(v, p.h0); return; }
+  }
   if (!art && v.kind === 'results') {
     const doc = docById(docId);
     const g = $$('.gap', v.root).find((x) => x.dataset.doc === docId && Number(x.dataset.a) < n && Number(x.dataset.b) > n);
@@ -3108,9 +3164,23 @@ function bind() {
     if (act === 'pick') $('#fileInput').click();
     else if (act === 'read') openReader(b.dataset.doc || sec?.dataset.doc);
     else if (act === 'open' && art) openReader(art.dataset.doc, Number(art.dataset.n));
+    else if (act === 'web' && art) { override.set(pkey(art.dataset.doc, WEB), 'original'); openReader(art.dataset.doc, Number(art.dataset.n)); }
     else if (act === 'pmode' && art) {
       const doc = docById(art.dataset.doc);
       const n = Number(art.dataset.n);
+      if (doc.kind === 'html') {
+        override.set(pkey(doc.id, WEB), pageMode(doc, n) === 'original' ? 'text' : 'original');
+        const v = art._v;
+        if (sec && !sec.classList.contains('ranked')) {
+          for (const [key, a] of [...v.pageEls]) if (a.dataset.doc === doc.id && sec.contains(a)) { io.unobserve(a); ioFar.unobserve(a); a._prevCleanup?.(); a._cleanup?.(); v.pageEls.delete(key); }
+          const R = v.kind === 'reader' ? v.list[0] : v.byKey?.get(sec.dataset.key);
+          const fresh = sectionEl(v, doc, R);
+          sec.replaceWith(fresh);
+          for (const a of v.pageEls.values()) if (fresh.contains(a)) { const r = a.getBoundingClientRect(); if (r.bottom > -innerHeight && r.top < innerHeight * 2) fill(a); }
+          if (pageMode(doc, n) === 'original') scrollToEl(fresh, 'start', 'instant');
+        } else refill(art);
+        return;
+      }
       override.set(pkey(doc.id, n), pageMode(doc, n) === 'original' ? 'text' : 'original');
       refill(art);
     }
@@ -3273,12 +3343,12 @@ function pageCursor(v, arr) {
   let lo = 0, hi = arr.length - 1, idx = arr.length;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    const a = v.pageEls.get(pkey(arr[mid].R.doc.id, arr[mid].p.n));
+    const a = artFor(v, arr[mid].R.doc.id, arr[mid].p.n);
     const r = a ? a.getBoundingClientRect() : { bottom: 0 };
     if (r.bottom > top + 40) { idx = mid; hi = mid - 1; } else lo = mid + 1;
   }
   if (idx >= arr.length) return { i: arr.length - 1, inside: true };
-  const a = v.pageEls.get(pkey(arr[idx].R.doc.id, arr[idx].p.n));
+  const a = artFor(v, arr[idx].R.doc.id, arr[idx].p.n);
   return { i: idx, inside: a ? a.getBoundingClientRect().top < top + 60 : true };
 }
 function stepPage(dir) {
@@ -3476,7 +3546,8 @@ function setView(view) {
   savePrefs();
   override.clear();
   syncControls();
-  refreshInPlace(active);
+  if (active.list.some((R) => R.doc.kind === 'html') || (active === reader && docById(reader.docId)?.kind === 'html')) renderView(active);
+  else refreshInPlace(active);
   if (active === reader) results.dirty = true;
 }
 
