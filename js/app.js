@@ -1284,6 +1284,15 @@ function docMenu(anchor, id) {
       { sep: true },
       { label: 'Check for an update', icon: I.refresh, disabled: !!d.status, run: () => checkSources({ docIds: [id] }) },
       { label: 'Open the original link', icon: I.globe, run: () => window.open(d.source.url, '_blank', 'noopener') },
+      ...(S.watch.some((w) => w.url === d.source.page) ? [{
+        label: 'Stop watching its page', icon: I.out, run: () => {
+          const w = S.watch.find((x) => x.url === d.source.page);
+          S.watch = S.watch.filter((x) => x !== w);
+          saveWatch();
+          renderLibrary();
+          toast(`↻ will no longer look at “${pageTitle(w)}” for new documents`);
+        },
+      }] : []),
     ] : []),
     { sep: true },
     ...moveItems(d),
@@ -1456,7 +1465,12 @@ async function updateStorage() {
 
 // ---------- documents from websites ----------
 const fmtSize = (b) => (!b ? '' : b < 1024 * 1024 ? `${Math.max(1, Math.round(b / 1024))} KB` : `${(b / 1048576).toFixed(b < 10 * 1048576 ? 1 : 0)} MB`);
-const hasSources = () => S.docs.some((d) => d.source) || S.folders.some((f) => f.source);
+// Pages being watched without a folder (documents from them sit loose in the library).
+const WATCH_KEY = 'instant-search:watched';
+S.watch = (() => { try { return JSON.parse(localStorage.getItem(WATCH_KEY)) || []; } catch { return []; } })();
+const saveWatch = () => { try { localStorage.setItem(WATCH_KEY, JSON.stringify(S.watch)); } catch {} };
+const pageTitle = (src) => (src.title || '').split(/\s[|–—-]\s/)[0] || (() => { try { return new URL(src.url).hostname; } catch { return 'linked page'; } })();
+const hasSources = () => S.docs.some((d) => d.source) || S.folders.some((f) => f.source) || S.watch.length > 0;
 function sourceTitle(src) {
   const when = src.checkedAt ? ` · checked ${new Date(src.checkedAt).toLocaleDateString()}` : '';
   return `Linked to ${src.url}${when}`;
@@ -1485,11 +1499,11 @@ function helperProblem(err) {
 }
 
 // Add one document from a link (download → read → save). Shows progress in the library.
-function addRemote(url, { folderId = null, linkText = '', note = '', info = null } = {}) {
+function addRemote(url, { folderId = null, linkText = '', note = '', page = '', info = null } = {}) {
   const name = linkText ? nameFromLink(linkText, url, info?.type) : fileNameFor(url, info?.type);
   const kind = kindOf(name) || 'html';
   const order = S.docs.reduce((m, d) => Math.max(m, d.order || 0), 0) + 1;
-  const meta = { id: uid(), name, kind, size: info?.size || 0, addedAt: Date.now(), order, enabled: true, status: 'indexing', phase: 'download', progress: 0, v: EXTRACTOR_VERSION, folderId, source: { url, linkText, note } };
+  const meta = { id: uid(), name, kind, size: info?.size || 0, addedAt: Date.now(), order, enabled: true, status: 'indexing', phase: 'download', progress: 0, v: EXTRACTOR_VERSION, folderId, source: { url, linkText, note, page } };
   S.docs.push(meta);
   renderLibrary();
   queue = queue.then(async () => {
@@ -1504,7 +1518,7 @@ function addRemote(url, { folderId = null, linkText = '', note = '', info = null
       meta.phase = 'read';
       meta.progress = 0;
       meta.size = dl.info.size;
-      meta.source = { url, linkText, note, etag: dl.info.etag, lastModified: dl.info.lastModified, size: dl.info.size, checkedAt: Date.now() };
+      meta.source = { url, linkText, note, page, etag: dl.info.etag, lastModified: dl.info.lastModified, size: dl.info.size, checkedAt: Date.now() };
       await ingest(new File([dl.bytes], meta.name, { type: dl.info.type || '' }), meta);
     } catch (err) {
       S.docs = S.docs.filter((d) => d !== meta);
@@ -1666,7 +1680,7 @@ async function offerReplacements(list, folderId) {
 function openLinkDialog(folderId, { url = '', helperOpen = false } = {}) {
   closeMenu();
   const sel = $('#linkFolder');
-  sel.innerHTML = `<option value="">No folder (or a new folder for a page of documents)</option>` + S.folders.map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join('');
+  sel.innerHTML = `<option value="">No folder</option>` + S.folders.map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join('');
   sel.value = folderId || '';
   $('#linkUrl').value = url;
   $('#helperUrl').value = helper.get();
@@ -1769,14 +1783,14 @@ async function pickFromPage(pageUrl, links, title, folderId) {
   if (!res) return;
   const picked = rows.filter((r) => r.link && res.picked.has(r));
   if (!picked.length) return;
-  let fid = folderId;
-  if (!fid) fid = createFolder((title || 'Linked documents').split(/\s[|–—-]\s/)[0].slice(0, 80)).id;
-  const f = folderById(fid);
-  if (res.options.link === 'watch') {
-    f.source = { url: pageUrl, title, ignored: rows.filter((r) => r.link && !res.picked.has(r)).map((r) => r.link.url), checkedAt: Date.now() };
-    saveFolders();
+  const fid = folderId && folderById(folderId) ? folderId : null; // no folder picked: they go straight into the library
+  const watch = res.options.link === 'watch';
+  if (watch) {
+    const src = { url: pageUrl, title, ignored: rows.filter((r) => r.link && !res.picked.has(r)).map((r) => r.link.url), checkedAt: Date.now() };
+    if (fid) { folderById(fid).source = src; saveFolders(); }
+    else { S.watch = S.watch.filter((w) => w.url !== pageUrl).concat(src); saveWatch(); }
   }
-  for (const r of picked) addRemote(r.link.url, { folderId: fid, linkText: r.link.text, note: r.link.note, info: { size: r.link.shownSize } });
+  for (const r of picked) addRemote(r.link.url, { folderId: fid, linkText: r.link.text, note: r.link.note, page: watch ? pageUrl : '', info: { size: r.link.shownSize } });
   renderLibrary();
 }
 
@@ -1785,7 +1799,14 @@ let checking = false;
 async function checkSources({ docIds = null, folderIds = null, quiet = false } = {}) {
   if (checking) { toast('Already checking — one moment'); return; }
   const all = !docIds && !folderIds;
-  const folders = S.folders.filter((f) => f.source && (all || folderIds?.includes(f.id)));
+  const watchers = [
+    ...S.folders.filter((f) => f.source && (all || folderIds?.includes(f.id))).map((f) => ({
+      name: f.name, src: f.source, folderId: f.id,
+      members: (d) => d.source?.page === f.source.url || (d.folderId === f.id && d.source && !d.source.page),
+    })),
+    ...(all ? S.watch : []).map((w) => ({ name: pageTitle(w), src: w, folderId: null, members: (d) => d.source?.page === w.url })),
+  ];
+  const folders = watchers; // (kept for the summary below)
   const covered = new Set();
   const jobs = [];      // { doc, url, link? }
   const rows = [];
@@ -1804,19 +1825,19 @@ async function checkSources({ docIds = null, folderIds = null, quiet = false } =
 
   try {
     // pages that list documents: find new, renamed and removed ones
-    for (const f of folders) {
-      status(`Checking “${f.name}”…`);
+    for (const w of watchers) {
+      status(`Checking “${w.name}”…`);
       try {
-        const { res, finalUrl } = await remoteFetch(f.source.url);
+        const { res, finalUrl } = await remoteFetch(w.src.url);
         if (!res.ok) throw new Error(`the page answered ${res.status}`);
-        const { links } = documentLinks(await res.text(), finalUrl || f.source.url);
-        const inFolder = S.docs.filter((d) => d.folderId === f.id && d.source && !d.status);
+        const { links } = documentLinks(await res.text(), finalUrl || w.src.url);
+        const inFolder = S.docs.filter((d) => w.members(d) && d.source && !d.status);
         const matched = new Set();
         const fresh = [];
         for (const l of links) {
           let d = inFolder.find((x) => x.source.url === l.url);
           if (d) { matched.add(d); jobs.push({ doc: d, url: l.url, link: l }); continue; }
-          if ((f.source.ignored || []).includes(l.url)) continue;
+          if ((w.src.ignored || []).includes(l.url)) continue;
           fresh.push(l);
         }
         // Sites often publish a new version under a new file name and a slightly different title
@@ -1842,17 +1863,17 @@ async function checkSources({ docIds = null, folderIds = null, quiet = false } =
         }
         for (const l of fresh) {
           if (pairedLinks.has(l)) continue;
-          add('New on the page', { kind: 'new', folder: f, link: l, checked: !l.parent, tone: 'up', title: l.text, detail: `${[fmtSize(l.shownSize), l.note].filter(Boolean).join(' · ')} · ${esc(fileNameFor(l.url))}` });
+          add('New on the page', { kind: 'new', watch: w, link: l, checked: !l.parent, tone: 'up', title: l.text, detail: `${[fmtSize(l.shownSize), l.note].filter(Boolean).join(' · ')} · ${esc(fileNameFor(l.url))}` });
         }
         for (const d of inFolder) {
           if (!matched.has(d)) { add('No longer on the page', { info: true, title: d.name, detail: 'Kept in your library. The site may have moved or retired it.' }); covered.add(d); }
         }
         inFolder.forEach((d) => covered.add(d));
-        f.source.checkedAt = Date.now();
+        w.src.checkedAt = Date.now();
       } catch (err) {
         failures++;
-        add('Couldn’t check', { info: true, tone: 'warn', title: f.name, detail: esc(helperProblem(err)) });
-        S.docs.filter((d) => d.folderId === f.id).forEach((d) => covered.add(d));
+        add('Couldn’t check', { info: true, tone: 'warn', title: w.name, detail: esc(helperProblem(err)) });
+        S.docs.filter((d) => w.members(d)).forEach((d) => covered.add(d));
       }
     }
     // single linked documents
@@ -1905,6 +1926,7 @@ async function checkSources({ docIds = null, folderIds = null, quiet = false } =
     $('#checkAllBtn').classList.remove('spin');
     t?._hide();
     saveFolders();
+    saveWatch();
     store.updateDocs(S.docs.filter((d) => d.source && !d.status).map(stripMeta)).catch(() => {});
     renderLibrary();
   }
@@ -1928,11 +1950,12 @@ async function checkSources({ docIds = null, folderIds = null, quiet = false } =
   for (const r of rows) {
     if (r.kind === 'update' && res.picked.has(r)) { await replaceDoc(r.doc, r.payload, res.options.keep); updated++; }
     if (r.kind === 'new') {
-      if (res.picked.has(r)) addRemote(r.link.url, { folderId: r.folder.id, linkText: r.link.text, note: r.link.note, info: { size: r.link.shownSize } });
-      else (r.folder.source.ignored ||= []).push(r.link.url); // don't suggest it again
+      if (res.picked.has(r)) addRemote(r.link.url, { folderId: r.watch.folderId, linkText: r.link.text, note: r.link.note, page: r.watch.src.url, info: { size: r.link.shownSize } });
+      else (r.watch.src.ignored ||= []).push(r.link.url); // don't suggest it again
     }
   }
   saveFolders();
+  saveWatch();
   runSearch({ keepScroll: true });
   updateStorage();
   const added = rows.filter((r) => r.kind === 'new' && res.picked.has(r)).length;
@@ -2216,6 +2239,8 @@ function bind() {
     S.docs.forEach((d) => closePdf(d.id));
     S.docs = [];
     S.folders = [];
+    S.watch = [];
+    saveWatch();
     S.texts.clear();
     await store.clear().catch(() => {});
     if (active === reader) closeReader();
