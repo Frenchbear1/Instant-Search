@@ -8,7 +8,8 @@
 
 const ALLOWED_SITES = [
   'faa.gov',
-  // 'ecfr.gov',
+  'govinfo.gov', // the official CFR (FARs) PDFs
+  'ecfr.gov',
   // 'ntsb.gov',
 ];
 

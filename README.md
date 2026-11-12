@@ -40,16 +40,23 @@ You can add a document straight from a link, or link a whole page that lists doc
 - **Dropping in a newer copy yourself** works too: add a file with the same name as one in your library, or the same name with a different edition letter or year, and you're shown both page counts and sizes and asked whether to replace it.
 - Optional: *Check linked sources for updates once a day when I open the app* (in the Download helper section of the link dialog).
 
-### Linking files you already have, with an AI's help
+### Finding documents with an AI's help
 
-For documents you added yourself, **▾ → Find links for my files with AI…** (also at the bottom of the web link window) saves looking up each source by hand:
+**▾ → Find documents with AI…** (also at the bottom of the web link window) has two modes:
 
-1. Pick which files (all unlinked files, only ticked ones, or one folder) and an AI (ChatGPT, Claude, Gemini, Perplexity or Copilot).
-2. **Copy & open** copies a request listing those files — with their folders, page counts and opening words — and opens the AI. Short requests are typed in for you; otherwise just paste. The request tells the AI to search the web, give only links it confirmed from the official publisher, and write NOT FOUND instead of guessing.
-3. Copy the AI's code block, come back and press **Paste from clipboard** (or paste into the box and press **Check & link**).
-4. The app opens every link itself before using it: the page must list the document, the file must download as a document, and its size is compared with your copy. Anything that doesn't add up is left unticked or set aside. Your copies aren't replaced. Press ↻ later and you'll be offered the site's version if it's different.
+- **Link files I have** — for documents you added yourself. Pick which files (all unlinked, only ticked, or one folder).
+- **Find new documents** — say what you want in your own words ("all the FARs for aviation, Part 1 to the last one I need") and pick where they go (a new folder with a name you choose, an existing folder, or no folder).
 
-Links go through the download helper, so sites that aren't in its `ALLOWED_SITES` list (faa.gov only by default) will show as "couldn't use". Add the site there if you trust it.
+Then:
+
+1. Pick an AI (ChatGPT, Claude, Gemini, Perplexity or Copilot) and press **Copy & open**. It copies a request and opens the AI; short requests are typed in for you, otherwise just paste. The request tells the AI to search the web, give only links it opened and confirmed from the official publisher, one line per document in a fixed format, and to leave out anything it isn't sure of. For US regulations (the FARs) it asks for govinfo.gov's official PDF of each part.
+2. Copy the AI's code block, come back and press **Paste from clipboard** (or paste into the box and press **Check & add**).
+3. The app opens every link itself before using it: a page must really list the document, a file must download as a document (not a web page), sizes are compared with your copies, two files can't share one link, and if the AI pointed a file at the wrong link on a page the right one is found. Anything that doesn't add up is left unticked or set aside.
+4. New documents are downloaded into the folder you chose; your own copies are linked but not replaced. Press ↻ later and you'll be offered the site's version if it's different.
+
+**Yearly editions:** documents whose link has the year in it (like govinfo's `CFR-2025-title14-…-part61.pdf`) are checked for next year's edition when you press ↻, and you're offered it once it's out.
+
+Links go through the download helper, so the site has to be in its `ALLOWED_SITES` list (faa.gov, govinfo.gov and ecfr.gov by default). If you set the helper up earlier, update it: paste the new worker code in again and deploy.
 
 ### Setting up the download helper (one time, free, about 5 minutes)
 
