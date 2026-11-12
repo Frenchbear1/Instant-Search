@@ -539,10 +539,29 @@ async function goTo(v, k) {
   await fill(art);
   if (v.cur !== k) return;
   const target = markCurrent(v) || art;
+  const startY = scrollY;
   v.navY = scrollToEl(target, 'center');
   target.classList.remove('pulse');
   void target.offsetWidth;
   target.classList.add('pulse');
+  await settle(v, k, target, Math.abs(v.navY - startY) > innerHeight * 2.5);
+}
+
+// Pages around the target fill in after a jump and push it around; keep re-centering until it holds still.
+async function settle(v, k, target, wasInstant) {
+  const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  if (!wasInstant) {
+    await Promise.race([new Promise((r) => addEventListener('scrollend', r, { once: true })), new Promise((r) => setTimeout(r, 700))]);
+  }
+  for (let i = 0; i < 6; i++) {
+    await frames();
+    if (v.cur !== k || !target.isConnected) return;
+    const r = target.getBoundingClientRect();
+    const top = topOffset();
+    const mid = top + (innerHeight - top) / 2;
+    if (Math.abs(r.top + r.height / 2 - mid) < 48) return;
+    v.navY = scrollToEl(target, 'center', 'instant');
+  }
 }
 
 // If the reader scrolled away since the last jump, continue from what's on screen.
@@ -1046,7 +1065,14 @@ function bind() {
   $('#summary').addEventListener('keydown', (e) => { if (e.target.id === 'jumpInput' && e.key === 'Enter') e.target.blur(); });
   $('#outline').addEventListener('click', (e) => {
     const b = e.target.closest('[data-n]');
-    if (b) scrollToPage(active, b.dataset.doc, Number(b.dataset.n));
+    if (!b) return;
+    const v = active;
+    const info = v.info.get(pkey(b.dataset.doc, Number(b.dataset.n)));
+    if (!info || !info.ranges.length) { scrollToPage(v, b.dataset.doc, Number(b.dataset.n)); return; }
+    // First click lands on the page's first hit; clicking the same page again steps through its hits.
+    const onPage = v.cur >= info.h0 && v.cur < info.h0 + info.ranges.length;
+    const k = onPage && b.classList.contains('ol-p') ? info.h0 + ((v.cur - info.h0 + 1) % info.ranges.length) : info.h0;
+    goTo(v, k);
   });
 
   addEventListener('scroll', trackPosition, { passive: true });
