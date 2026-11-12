@@ -1,8 +1,8 @@
 import { compile, MODES } from './search.js';
 import { store } from './store.js';
-import { readFile, kindOf, ACCEPT } from './ingest.js';
+import { readFile, kindOf, ACCEPT, paginate } from './ingest.js';
 import { getPdf, closePdf, renderPdfPage, EXTRACTOR_VERSION } from './pdf.js';
-import { renderHtmlPage, forgetHtml } from './htmlview.js';
+import { renderHtmlPage, forgetHtml, renderedText } from './htmlview.js';
 import { remoteFetch, remoteInfo, remoteChanged, download, documentLinks, looksLikeDocument, fileNameFor, editionKey, linkKey, linkSimilarity, SAME_DOC_SCORE, helper, NeedsHelper } from './remote.js';
 import { comboFromEvent, comboLabel, worksWhileTyping, isMac } from './keys.js';
 
@@ -260,7 +260,7 @@ function pageRanges(v, docId, n, text, ctx) {
 // ---------- page cards ----------
 const override = new Map(); // per-page Text/Original choice
 // PDFs keep their file; HTML files added from now on keep their source too
-const hasOriginal = (doc) => doc.kind === 'pdf' || (doc.kind === 'html' && !!doc.hasOriginal);
+const hasOriginal = (doc) => doc.kind === 'pdf' || doc.kind === 'html';
 function pageMode(doc, n) {
   if (!hasOriginal(doc)) return 'text';
   const o = override.get(pkey(doc.id, n));
@@ -359,14 +359,30 @@ function fill(art) {
       try {
         const cleanup = await renderHtmlPage({
           docId: doc.id, n, pageCount: S.texts.get(doc.id)?.length || 1, host: body,
-          matcher: S.matcher, ordinal: htmlOrdinal(doc, n, ranges), zoom: zoomValue(),
+          matcher: S.matcher, ordinal: htmlOrdinal(doc, n, ranges), zoom: zoomValue(), base: doc.source?.url || doc.baseUrl || '',
         });
         if (token !== art._token) { cleanup(); return; }
         art._cleanup = cleanup;
         swapped();
       } catch (err) {
         if (token !== art._token) return;
-        body.innerHTML = `<p class="empty-page">${I.warn}<span>Couldn’t show the original (${esc(err.message)}).</span></p>`;
+        const missing = /wasn’t stored/.test(err.message);
+        // added before the app kept web pages: a linked one can simply be fetched again
+        if (missing && doc.source?.url && !art._refetched) {
+          art._refetched = true;
+          body.innerHTML = `<p class="empty-page">${I.refresh}<span>Getting the web page…</span></p>`;
+          try {
+            const dl = await download(doc.source.url);
+            const html = new TextDecoder().decode(dl.bytes);
+            await store.addDoc(stripMeta(Object.assign(doc, { hasOriginal: true })), S.texts.get(doc.id), html);
+            forgetHtml(doc.id);
+            if (token === art._token) { art._token++; art._filled = null; fill(art); }
+            return;
+          } catch (e2) { err = e2; }
+        }
+        body.innerHTML = `<p class="empty-page">${I.warn}<span>${missing && !doc.source?.url
+          ? 'This page was added before the app kept the web page itself. Drop the file in again to see the real page (your library keeps everything else).'
+          : `Couldn’t show the original (${esc(helperProblem(err))}).`}</span></p>`;
         swapped();
       }
       body.classList.remove('loading');
@@ -1591,16 +1607,23 @@ const forceNew = new WeakSet(); // files the person chose to add separately
 async function ingest(file, meta) {
   let last = 0;
   try {
-    const { pages, bytes } = await readFile(file, (n, total) => {
+    let { pages, bytes, baseUrl } = await readFile(file, (n, total) => {
       meta.progress = n / total;
       const now = performance.now();
       if (now - last > 120) { last = now; showProgress(meta); }
     });
+    // a page that builds itself with scripts: search the text it actually shows
+    if (meta.kind === 'html' && typeof bytes === 'string' && /<script[\s>]/i.test(bytes)) {
+      const shown = (await renderedText(bytes, meta.source?.url || baseUrl).catch(() => '')).trim();
+      const plain = pages.join('\n').trim();
+      if (shown.length > plain.length * 1.15 + 80) pages = paginate(shown);
+    }
     const chars = pages.reduce((a, p) => a + p.trim().length, 0);
     meta.pages = pages.length;
     meta.hash = textHash(pages);
     meta.noText = meta.kind === 'pdf' && chars < pages.length * 25;
     if (meta.kind === 'html' && bytes) meta.hasOriginal = true;
+    if (baseUrl) meta.baseUrl = baseUrl;
     if (!S.docs.includes(meta)) return; // removed while reading
     if (meta.folderId && !folderById(meta.folderId)) meta.folderId = null;
     delete meta.status;

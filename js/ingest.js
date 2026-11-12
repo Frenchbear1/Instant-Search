@@ -1,15 +1,16 @@
 // Turns uploaded files into an array of page texts.
 import { extractPdf } from './pdf.js';
+import { isMhtml, mhtmlToHtml } from './mhtml.js';
 
 const PAGE_CHARS = 3000;
 
-export const ACCEPT = '.pdf,.docx,.txt,.md,.markdown,.csv,.tsv,.json,.log,.html,.htm,.xml,.rtf,.srt,.vtt,.yaml,.yml,.ini';
+export const ACCEPT = '.pdf,.docx,.txt,.md,.markdown,.csv,.tsv,.json,.log,.html,.htm,.mhtml,.mht,.xml,.rtf,.srt,.vtt,.yaml,.yml,.ini';
 
 export function kindOf(name) {
   const ext = (name.split('.').pop() || '').toLowerCase();
   if (ext === 'pdf') return 'pdf';
   if (ext === 'docx') return 'docx';
-  if (ext === 'html' || ext === 'htm') return 'html';
+  if (ext === 'html' || ext === 'htm' || ext === 'mhtml' || ext === 'mht') return 'html';
   if (ext === 'md' || ext === 'markdown') return 'md';
   if (ext === 'rtf') return 'rtf';
   if (ACCEPT.split(',').includes('.' + ext)) return 'txt';
@@ -91,6 +92,23 @@ function rtfToText(rtf) {
     .replace(/[{}]/g, '');
 }
 
+// HTML is usually UTF-8, but older pages say otherwise in a <meta charset>.
+function decodeHtml(buf) {
+  if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) return new TextDecoder('utf-8').decode(buf);
+  const head = new TextDecoder('latin1').decode(buf.subarray(0, 4096));
+  const cs = (head.match(/<meta[^>]+charset\s*=\s*["']?([\w-]+)/i) || [])[1];
+  try { return new TextDecoder(cs && !/utf-?8/i.test(cs) ? cs : 'utf-8').decode(buf); } catch { return new TextDecoder('utf-8').decode(buf); }
+}
+/** The address a saved page came from, so its pictures and styles can still load. */
+export function savedFrom(html) {
+  const head = html.slice(0, 20000);
+  const m = head.match(/<!--\s*saved from url=\(\d+\)(\S+?)\s*-->/i)
+    || head.match(/<link[^>]+rel=["']?canonical["']?[^>]*href=["']([^"']+)/i)
+    || head.match(/<link[^>]+href=["']([^"']+)["'][^>]*rel=["']?canonical/i)
+    || head.match(/<meta[^>]+property=["']og:url["'][^>]*content=["']([^"']+)/i);
+  return m && /^https?:\/\//i.test(m[1]) ? m[1] : '';
+}
+
 /** Returns { pages, kind, bytes? } — bytes kept for PDFs and HTML so the original can be shown. */
 export async function readFile(file, onProgress) {
   const kind = kindOf(file.name);
@@ -105,8 +123,19 @@ export async function readFile(file, onProgress) {
     const { value } = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
     return { kind, pages: paginate(value) };
   }
+  if (kind === 'html') {
+    // the page is kept as it is for the Original view
+    const buf = new Uint8Array(await file.arrayBuffer());
+    let raw = decodeHtml(buf);
+    let baseUrl = savedFrom(raw);
+    if (/\.mht(ml)?$/i.test(file.name) || isMhtml(raw)) {
+      const page = mhtmlToHtml(new TextDecoder('latin1').decode(buf));
+      raw = page.html;
+      baseUrl = page.url || baseUrl;
+    }
+    return { kind, pages: paginate(htmlToText(raw)), bytes: raw, baseUrl };
+  }
   const raw = await file.text();
-  if (kind === 'html') return { kind, pages: paginate(htmlToText(raw)), bytes: raw }; // raw kept for the Original view
   if (kind === 'rtf') return { kind, pages: paginate(rtfToText(raw)) };
   return { kind, pages: paginate(raw) };
 }
