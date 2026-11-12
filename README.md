@@ -14,6 +14,7 @@ Open `index.html` from any static host (it's a plain static site, no build step)
 - **Text or Original** for PDFs and HTML: read clean reflowed text, or the real thing with highlights on it. PDFs show the actual page; HTML files show the real web page in a locked-down frame (no scripts, links and forms disabled), scrolled to that page's match. Switch globally or per page. Scanned PDF pages with no text show the original automatically.
 - **Read whole** opens one document in full, still highlighted, with a page jump box.
 - **Folders**: tick a folder to search everything in it (or untick it to leave it out); the target button searches only that folder. Drag documents between folders, drop files from your computer straight onto a folder, add a whole folder from your computer (it becomes a library folder), or use the ▾ next to Add documents to import a batch into an existing or new folder. Deleting a folder keeps its documents.
+- **Drag to reorder** documents and folders — a blue line shows where it will land. Drop a document on a folder's name to put it inside; hold near the top or bottom of the library to scroll while dragging. Results follow the library order.
 - Library checkboxes choose which documents are searched; the target button searches only one.
 - **Resize the library**: drag its right edge to make it wider or narrower (double-click the edge to reset). Drag it most of the way closed to hide it.
 - **Sort** results by library order, documents with most hits, or pages with most hits (every hit page across all documents, ranked).

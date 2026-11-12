@@ -952,7 +952,7 @@ function renderLibrary() {
     const fh = docs.reduce((a, d) => a + (d.enabled ? hits.get(d.id) || 0 : 0), 0);
     const badge = S.matcher && on ? `<span class="lhits${fh ? '' : ' zero'}">${fmt(fh)}</span>` : '';
     return `<li class="folder${f.collapsed ? ' collapsed' : ''}${rd.length && !on ? ' off' : ''}" data-fid="${f.id}">
-      <div class="folder-row">
+      <div class="folder-row" draggable="true">
         <label class="chk" title="Search this whole folder"><input type="checkbox" data-fchk ${rd.length && on === rd.length ? 'checked' : ''} ${on && on < rd.length ? 'data-indet' : ''} ${rd.length ? '' : 'disabled'}><span></span></label>
         <button class="folder-main" data-act="fold" title="${esc(f.name)}"><span class="chev">${I.chevron}</span><span class="ficon">${I.folder}</span><span class="fname">${esc(f.name)}</span>${f.source ? `<span class="linked" title="${esc(sourceTitle(f.source))}">${I.link}</span>` : ''}<span class="fcount">${fmt(docs.length)}</span></button>
         ${badge}
@@ -1137,6 +1137,7 @@ function startRename(fid) {
   if (!f || !li) return;
   li.classList.remove('collapsed');
   const span = $('.fname', li);
+  li.querySelector('.folder-row')?.setAttribute('draggable', 'false');
   const input = el('input', 'frename');
   renaming = { fid, input };
   input.value = f.name;
@@ -1201,6 +1202,42 @@ function moveDocs(ids, fid) {
   if (f?.collapsed) { f.collapsed = false; saveFolders(); }
   runSearch({ keepScroll: true });
   toast(`${docs.length === 1 ? `“${docs[0].name}”` : plural(docs.length, 'document')} moved ${f ? `to “${f.name}”` : 'out of the folder'}`, { ms: 2200 });
+}
+
+// Put a document right before/after another one (or at the end of a folder / the library).
+function placeDoc(id, fid, refId, before) {
+  const d = docById(id);
+  if (!d) return;
+  const movedFolder = (d.folderId || null) !== (fid || null);
+  S.docs.splice(S.docs.indexOf(d), 1);
+  let at = S.docs.length;
+  if (refId) {
+    const ref = docById(refId);
+    if (ref) at = S.docs.indexOf(ref) + (before ? 0 : 1);
+  } else if (fid) {
+    // end of that folder
+    const inFolder = S.docs.filter((x) => x.folderId === fid);
+    if (inFolder.length) at = S.docs.indexOf(inFolder[inFolder.length - 1]) + 1;
+  }
+  S.docs.splice(at, 0, d);
+  d.folderId = fid || null;
+  S.docs.forEach((x, i) => (x.order = i + 1));
+  store.updateDocs(S.docs.filter(searchable).map(stripMeta)).catch(() => {});
+  const f = fid && folderById(fid);
+  if (f?.collapsed && movedFolder) { f.collapsed = false; saveFolders(); }
+  runSearch({ keepScroll: true });
+  if (movedFolder) toast(`“${d.name}” moved ${f ? `to “${f.name}”` : 'out of the folder'}`, { ms: 2000 });
+}
+
+function reorderFolder(id, refId, before) {
+  const f = folderById(id);
+  const ref = folderById(refId);
+  if (!f || !ref || f === ref) return;
+  S.folders.splice(S.folders.indexOf(f), 1);
+  S.folders.splice(S.folders.indexOf(ref) + (before ? 0 : 1), 0, f);
+  S.folders.forEach((x, i) => (x.order = i + 1));
+  saveFolders();
+  runSearch({ keepScroll: true });
 }
 
 let pendingFolderDelete = null;
@@ -2183,53 +2220,120 @@ function bind() {
     if (f) { e.preventDefault(); startRename(f.closest('.folder').dataset.fid); }
   });
 
-  // drag documents between folders; drop files from the computer onto a folder
+  // drag to reorder documents and folders, move documents between folders, drop files onto a folder
   const DOC_TYPE = 'application/x-instant-doc';
-  let dragIds = null;
+  const FOLDER_TYPE = 'application/x-instant-folder';
+  const zone = $('.lib-zone');
+  const line = el('div', 'drop-line');
+  let drag = null; // { kind: 'doc'|'folder', id }
   $('#lib').addEventListener('dragstart', (e) => {
     const li = e.target.closest?.('.lib-item');
-    if (!li) return;
-    dragIds = [li.dataset.id];
-    e.dataTransfer.setData(DOC_TYPE, li.dataset.id);
-    e.dataTransfer.setData('text/plain', docById(li.dataset.id)?.name || '');
+    const frow = !li && e.target.closest?.('.folder-row');
+    if (li) {
+      drag = { kind: 'doc', id: li.dataset.id };
+      e.dataTransfer.setData(DOC_TYPE, li.dataset.id);
+      e.dataTransfer.setData('text/plain', docById(li.dataset.id)?.name || '');
+      li.classList.add('dragged');
+      document.body.classList.add('moving-doc');
+    } else if (frow) {
+      const fol = frow.closest('.folder');
+      drag = { kind: 'folder', id: fol.dataset.fid };
+      e.dataTransfer.setData(FOLDER_TYPE, fol.dataset.fid);
+      e.dataTransfer.setData('text/plain', folderById(fol.dataset.fid)?.name || '');
+      fol.classList.add('dragged');
+      document.body.classList.add('moving-folder');
+    } else return;
     e.dataTransfer.effectAllowed = 'move';
-    li.classList.add('dragged');
-    document.body.classList.add('moving-doc');
   });
-  $('#lib').addEventListener('dragend', () => {
-    dragIds = null;
+  const endDrag = () => {
+    drag = null;
     $$('.dragged').forEach((x) => x.classList.remove('dragged'));
-    document.body.classList.remove('moving-doc');
+    document.body.classList.remove('moving-doc', 'moving-folder');
     clearDropMarks();
-  });
-  const clearDropMarks = () => $$('.drop-on').forEach((x) => x.classList.remove('drop-on'));
-  const dropTarget = (e) => e.target.closest?.('.folder') || $('.lib-zone');
-  $('.lib-zone').addEventListener('dragover', (e) => {
+  };
+  $('#lib').addEventListener('dragend', endDrag);
+  const clearDropMarks = () => { $$('.drop-on').forEach((x) => x.classList.remove('drop-on')); line.remove(); };
+  const showLine = (target, before) => {
+    clearDropMarks();
+    const zr = zone.getBoundingClientRect();
+    const r = target.getBoundingClientRect();
+    line.style.top = `${(before ? r.top : r.bottom) - zr.top + zone.scrollTop - 1}px`;
+    line.style.left = `${r.left - zr.left + 6}px`;
+    line.style.width = `${r.width - 12}px`;
+    zone.append(line);
+  };
+  const highlight = (t) => { if (!t.classList.contains('drop-on') || line.isConnected) { clearDropMarks(); t.classList.add('drop-on'); } };
+
+  // Work out where a drop at this point would go.
+  const spot = (e) => {
+    const y = e.clientY;
+    if (drag?.kind === 'folder') {
+      const fol = e.target.closest?.('.folder');
+      const folders = $$('#lib > .folder');
+      if (!folders.length) return null;
+      if (fol) {
+        if (fol.dataset.fid === drag.id) return { none: true };
+        const row = fol.querySelector('.folder-row').getBoundingClientRect();
+        return { kind: 'folder', ref: fol.dataset.fid, before: y < row.top + row.height / 2, el: fol };
+      }
+      const last = folders[folders.length - 1];
+      return { kind: 'folder', ref: last.dataset.fid, before: false, el: last }; // below the folders
+    }
+    const item = e.target.closest?.('.lib-item');
+    if (item) {
+      if (drag && item.dataset.id === drag.id) return { none: true };
+      const r = item.getBoundingClientRect();
+      return { kind: 'between', ref: item.dataset.id, before: y < r.top + r.height / 2, fid: item.closest('.folder')?.dataset.fid || null, el: item };
+    }
+    const fol = e.target.closest?.('.folder');
+    if (fol) return { kind: 'into', fid: fol.dataset.fid, el: fol };
+    return { kind: 'into', fid: null, el: zone };
+  };
+
+  // While dragging near the top or bottom of the library, scroll it.
+  const autoScroll = (y) => {
+    const zr = zone.getBoundingClientRect();
+    const edge = 56;
+    if (y < zr.top + edge) zone.scrollTop -= Math.ceil((zr.top + edge - y) / 3);
+    else if (y > zr.bottom - edge) zone.scrollTop += Math.ceil((y - (zr.bottom - edge)) / 3);
+  };
+  zone.addEventListener('dragover', (e) => {
     const types = [...e.dataTransfer.types];
-    if (!types.includes(DOC_TYPE) && !types.includes('Files')) return;
+    const internal = types.includes(DOC_TYPE) || types.includes(FOLDER_TYPE);
+    if (!internal && !types.includes('Files')) return;
     e.preventDefault();
     e.stopPropagation();
-    e.dataTransfer.dropEffect = types.includes(DOC_TYPE) ? 'move' : 'copy';
-    const t = dropTarget(e);
-    if (!t.classList.contains('drop-on')) { clearDropMarks(); t.classList.add('drop-on'); }
-    const f = t.classList.contains('folder') && folderById(t.dataset.fid);
-    if (f?.collapsed && !t._openTimer) t._openTimer = setTimeout(() => { if (t.classList.contains('drop-on')) toggleFolder(f.id); t._openTimer = null; }, 700);
+    e.dataTransfer.dropEffect = internal ? 'move' : 'copy';
+    autoScroll(e.clientY);
+    if (!internal) { highlight(e.target.closest?.('.folder') || zone); return; } // files from the computer: into a folder or the library
+    const s = spot(e);
+    if (!s || s.none) { clearDropMarks(); return; }
+    if (s.kind === 'into') highlight(s.el);
+    else showLine(s.el, s.before);
+    const f = s.kind === 'into' && s.fid && folderById(s.fid);
+    if (f?.collapsed && !s.el._openTimer) s.el._openTimer = setTimeout(() => { if (s.el.classList.contains('drop-on')) toggleFolder(f.id); s.el._openTimer = null; }, 700);
   });
-  $('.lib-zone').addEventListener('dragleave', (e) => {
-    if (!e.relatedTarget || !$('.lib-zone').contains(e.relatedTarget)) clearDropMarks();
+  zone.addEventListener('dragleave', (e) => {
+    if (!e.relatedTarget || !zone.contains(e.relatedTarget)) clearDropMarks();
   });
-  $('.lib-zone').addEventListener('drop', (e) => {
+  zone.addEventListener('drop', (e) => {
     const types = [...e.dataTransfer.types];
-    if (!types.includes(DOC_TYPE) && !types.includes('Files')) return;
+    const internal = types.includes(DOC_TYPE) || types.includes(FOLDER_TYPE);
+    if (!internal && !types.includes('Files')) return;
     e.preventDefault();
     e.stopPropagation();
-    const t = dropTarget(e);
-    const fid = t.classList.contains('folder') ? t.dataset.fid : null;
+    const s = internal ? spot(e) : null;
+    const filesTarget = !internal ? (e.target.closest?.('.folder')?.dataset.fid || null) : null;
+    const d = drag;
     clearDropMarks();
-    document.body.classList.remove('dragging', 'moving-doc');
+    document.body.classList.remove('dragging');
     resetDrag();
-    if (types.includes(DOC_TYPE)) moveDocs(dragIds || [e.dataTransfer.getData(DOC_TYPE)], fid);
-    else importDrop(e.dataTransfer, fid || undefined);
+    endDrag();
+    if (!internal) { importDrop(e.dataTransfer, filesTarget || undefined); return; }
+    if (!s || s.none || !d) return;
+    if (d.kind === 'folder') reorderFolder(d.id, s.ref, s.before);
+    else if (s.kind === 'between') placeDoc(d.id, s.fid, s.ref, s.before);
+    else placeDoc(d.id, s.fid, null, false);
   });
   $('#toggleAll').addEventListener('click', toggleAll);
   $('#clearLib').addEventListener('click', async () => {
