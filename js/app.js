@@ -1267,10 +1267,13 @@ const self = (label) => ({ label: `${label} (this one)`, icon: I.text, disabled:
 // The list shown under "Rearrange" for a document: the library as it looks, folders open their files.
 function rearrangeDocItems(id) {
   const docRow = (x) => (x.id === id ? self(x.name) : { label: x.name, icon: I.text, run: () => putDoc(id, { above: x.id }) });
-  const items = [{ header: 'Put it above…' }];
+  const items = [{ header: 'Put it above… (tap a folder for its top)' }];
   for (const f of S.folders) {
+    const inside = docsIn(f.id);
     items.push({
       label: f.name, icon: I.folder,
+      // tapping the folder puts the document at the top of it; › (or hovering) shows its files to pick a spot
+      run: () => (inside[0] && inside[0].id !== id ? putDoc(id, { above: inside[0].id }) : putDoc(id, { end: f.id })),
       submenu: () => [{ header: `In “${f.name}”` }, ...docsIn(f.id).map(docRow), { sep: true }, { label: `At the end of “${f.name}”`, icon: I.down, run: () => putDoc(id, { end: f.id }) }],
     });
   }
@@ -1337,13 +1340,15 @@ function fillMenu(m, items, { onBack } = {}) {
     if (it.sep) { m.append(el('div', 'menu-sep')); continue; }
     if (it.header) { m.append(el('div', 'menu-head', esc(it.header))); continue; }
     const b = el('button', `menu-item${it.danger ? ' danger' : ''}${it.checked ? ' checked' : ''}${it.submenu ? ' has-sub' : ''}`,
-      `${it.icon || '<span class="menu-gap"></span>'}<span>${esc(it.label)}</span>${it.checked ? I.check : ''}${it.submenu ? `<i class="sub-arrow">${I.chevron}</i>` : ''}`);
+      `${it.icon || '<span class="menu-gap"></span>'}<span>${esc(it.label)}</span>${it.checked ? I.check : ''}${it.submenu ? `<i class="sub-arrow${it.run ? ' split' : ''}" title="Show what’s inside">${I.chevron}</i>` : ''}`);
     b.setAttribute('role', 'menuitem');
     if (it.disabled) b.disabled = true;
     if (it.submenu) {
       b.setAttribute('aria-haspopup', 'menu');
       b.addEventListener('click', (e) => {
         e.stopPropagation();
+        // an item that has its own action does it when tapped; its › still opens the list
+        if (it.run && !e.target.closest('.sub-arrow')) { closeMenu(); it.run(); return; }
         if (compactMenus()) {
           const prev = items;
           fillMenu(m, it.submenu(), { onBack: () => { fillMenu(m, prev, { onBack }); placeMenu(m); } });

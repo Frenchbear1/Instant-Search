@@ -216,10 +216,12 @@ body.moving-doc .lib-item:hover { background: transparent; }
 .lib-acts {
   /* floats over the end of the row so names can use the full width */
   position: absolute; right: 6px; top: 50%; transform: translateY(-50%); z-index: 2;
-  display: flex; gap: 2px; padding-left: 22px;
-  background: linear-gradient(to right, transparent, var(--row-hover) 20px);
+  display: flex; gap: 0; background: var(--row-hover); border-radius: 8px;
   opacity: 0; pointer-events: none; transition: opacity 0.15s;
 }
+/* the fade into the row is decoration only: it never catches the mouse */
+.lib-acts::before { content: ""; position: absolute; right: 100%; top: 0; bottom: 0; width: 22px; background: linear-gradient(to right, transparent, var(--row-hover)); pointer-events: none; }
+.lib-acts .mini { width: 28px; }
 :root { --row-hover: color-mix(in srgb, var(--panel) 91%, #7f786e); }
 .lib-item:hover .lib-acts, .lib-item:focus-within .lib-acts { opacity: 1; pointer-events: auto; }
 .lib-item:hover .lhits, .lib-item:focus-within .lhits { opacity: 0; }
@@ -792,3 +794,14 @@ dialog[open] { animation: dlg 0.2s ease-out; }
 .pop-menu.sub { z-index: 121; min-width: 190px; }
 .menu-back { color: var(--accent); font-weight: 600; }
 .menu-back svg { color: var(--accent) !important; }
+
+/* every part of a button, icon included, shows the clicking hand */
+button, button * { cursor: pointer; }
+button:disabled, button:disabled * { cursor: default; }
+button svg { pointer-events: none; }
+.lib-main[draggable="true"], .lib-main[draggable="true"] * { cursor: grab; }
+
+.menu-item .sub-arrow.split { align-self: stretch; width: 34px; margin: 0 -10px 0 auto; border-left: 1px solid var(--line); border-radius: 0 8px 8px 0; }
+.menu-item .sub-arrow.split:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.lib-acts { cursor: pointer; align-items: stretch; }
+.lib-acts .mini { height: 28px; }
