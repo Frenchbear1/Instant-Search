@@ -1491,6 +1491,7 @@ function addMenu(anchor) {
     { label: 'Add files into a new folder…', icon: I.folderPlus, run: () => pickFiles('new') },
     { label: 'Add from a web link…', icon: I.link, run: () => openLinkDialog(null) },
   ];
+  if (unlinked().length) items.push({ label: 'Find links for my files with AI…', icon: I.link, run: () => openLinkDialog(null, { aiOpen: true }) });
   if (hasSources()) items.push({ label: 'Check linked sources for updates', icon: I.refresh, run: () => checkSources() });
   if (S.folders.length) {
     items.push({ sep: true }, { header: 'Add files into' });
@@ -1850,7 +1851,7 @@ async function offerReplacements(list, folderId) {
 }
 
 // ---------- option 1 + 2: add from a link (a file, or a page listing files) ----------
-function openLinkDialog(folderId, { url = '', helperOpen = false } = {}) {
+function openLinkDialog(folderId, { url = '', helperOpen = false, aiOpen = false } = {}) {
   closeMenu();
   const sel = $('#linkFolder');
   sel.innerHTML = `<option value="">No folder</option>` + S.folders.map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join('');
@@ -1861,10 +1862,13 @@ function openLinkDialog(folderId, { url = '', helperOpen = false } = {}) {
   $('#helperState').textContent = helper.get() ? 'set up' : 'not set up';
   $('#helperState').className = helper.get() ? 'ok' : '';
   $('#helperBox').open = helperOpen || false;
+  $('#aiBox').open = aiOpen || false;
+  fillAiBox();
   setLinkStatus('');
   $('#linkGo').disabled = false;
   $('#linkDlg').showModal();
-  setTimeout(() => (helperOpen ? $('#helperUrl') : $('#linkUrl')).focus(), 50);
+  setTimeout(() => (helperOpen ? $('#helperUrl') : aiOpen ? $('#aiGo') : $('#linkUrl')).focus(), 50);
+  if (aiOpen) setTimeout(() => $('#aiBox').scrollIntoView({ block: 'nearest' }), 60);
 }
 function setLinkStatus(msg, err) {
   const s = $('#linkStatus');
@@ -1965,6 +1969,300 @@ async function pickFromPage(pageUrl, links, title, folderId) {
   }
   for (const r of picked) addRemote(r.link.url, { folderId: fid, linkText: r.link.text, note: r.link.note, page: watch ? pageUrl : '', info: { size: r.link.shownSize } });
   renderLibrary();
+}
+
+// ---------- finding links for files you already have, with an AI chatbot ----------
+// The app writes a request listing your unlinked files; you paste it into a chatbot that can search the web,
+// then paste its answer back. Every link it gives is opened and checked here before anything is linked.
+const AI_BOTS = {
+  chatgpt: { label: 'ChatGPT', url: 'https://chatgpt.com/', q: (t) => `https://chatgpt.com/?hints=search&q=${encodeURIComponent(t)}` },
+  claude: { label: 'Claude', url: 'https://claude.ai/new', q: (t) => `https://claude.ai/new?q=${encodeURIComponent(t)}` },
+  gemini: { label: 'Gemini', url: 'https://gemini.google.com/app' },
+  perplexity: { label: 'Perplexity', url: 'https://www.perplexity.ai/', q: (t) => `https://www.perplexity.ai/search?q=${encodeURIComponent(t)}` },
+  copilot: { label: 'Copilot', url: 'https://copilot.microsoft.com/' },
+};
+const unlinked = () => S.docs.filter((d) => !d.status && !d.source);
+
+function fillAiBox() {
+  const all = unlinked();
+  const ticked = all.filter((d) => d.enabled);
+  const opts = [`<option value="all">All files without a link (${fmt(all.length)})</option>`];
+  if (ticked.length && ticked.length < all.length) opts.push(`<option value="ticked">Only ticked ones (${fmt(ticked.length)})</option>`);
+  for (const f of S.folders) {
+    const n = all.filter((d) => d.folderId === f.id).length;
+    if (n) opts.push(`<option value="f:${f.id}">Folder “${esc(f.name)}” (${fmt(n)})</option>`);
+  }
+  const which = $('#aiWhich');
+  const was = which.value;
+  which.innerHTML = opts.join('');
+  if ([...which.options].some((o) => o.value === was)) which.value = was;
+  $('#aiBot').innerHTML = Object.entries(AI_BOTS).map(([k, b]) => `<option value="${k}">${b.label}</option>`).join('');
+  $('#aiBot').value = AI_BOTS[prefs.aiBot] ? prefs.aiBot : 'chatgpt';
+  $('#aiState').textContent = all.length ? `${plural(all.length, 'file')} not linked` : 'everything is linked';
+  $('#aiGo').disabled = $('#aiCopy').disabled = !all.length;
+  setAiStatus('');
+}
+function setAiStatus(msg, err) {
+  const s = $('#aiStatus');
+  s.innerHTML = msg;
+  s.classList.toggle('err', !!err);
+}
+function aiFiles() {
+  const v = $('#aiWhich').value;
+  const all = unlinked();
+  if (v === 'ticked') return all.filter((d) => d.enabled);
+  if (v.startsWith('f:')) return all.filter((d) => d.folderId === v.slice(2));
+  return all;
+}
+function aiPrompt(docs) {
+  const opening = (d) => {
+    const first = (S.texts.get(d.id) || []).find((p) => p.trim()) || '';
+    const t = first.replace(/\s+/g, ' ').trim().slice(0, 90);
+    return t ? ` — begins “${t.replace(/["“”]/g, '')}…”` : '';
+  };
+  const line = (d) => `- ${d.name} (${[d.pages || S.texts.get(d.id)?.length ? plural(d.pages || S.texts.get(d.id).length, 'page') : '', fmtSize(d.size)].filter(Boolean).join(', ')})${opening(d)}`;
+  const groups = [];
+  for (const it of topLevel()) {
+    if (it.kind === 'folder') {
+      const inside = docs.filter((d) => d.folderId === it.id);
+      if (inside.length) groups.push(`Folder “${it.f.name}”:\n${inside.map(line).join('\n')}`);
+    }
+  }
+  const loose = docs.filter((d) => !(d.folderId && folderById(d.folderId)));
+  if (loose.length) groups.push(`${groups.length ? 'Not in a folder:\n' : ''}${loose.map(line).join('\n')}`);
+  return `I keep the documents listed below in a document search app. I want to link each one to its official source on the web, so the app can check that source for newer editions later.
+
+For each file, search the web and find the official publisher's copy (for example faa.gov for FAA handbooks and orders). Open the pages to confirm. Only give links you have confirmed exist and that come from the official publisher — not mirrors, shops, school sites or file-sharing sites. If you are not sure, write NOT FOUND. A wrong link is worse than no link, so never guess or build a URL from a pattern.
+
+For each file give:
+- PAGE: the publisher's web page that lists this document and its download, i.e. the page they update when a new edition comes out. This matters most, because the app watches that page for new editions.
+- FILE: the direct download link of the current edition (usually a .pdf), exactly as linked on that page.
+
+Reply with one code block and nothing else, one line per file, in exactly this format, with the file name copied exactly as I wrote it:
+<file name> | PAGE: <link or NOT FOUND> | FILE: <link or NOT FOUND>
+
+My files (folder names, page counts and opening words are there to help you identify them):
+
+${groups.join('\n\n')}`;
+}
+function copyText(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;';
+  (document.querySelector('dialog[open]') || document.body).append(ta); // outside an open dialog the page is inert
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch {}
+  ta.remove();
+  if (!ok && navigator.clipboard) { navigator.clipboard.writeText(text).catch(() => {}); ok = true; }
+  return ok;
+}
+function aiCopy(go) {
+  const docs = aiFiles();
+  if (!docs.length) return;
+  const text = aiPrompt(docs);
+  const ok = copyText(text);
+  const bot = AI_BOTS[$('#aiBot').value] || AI_BOTS.chatgpt;
+  prefs.aiBot = $('#aiBot').value;
+  savePrefs();
+  if (go) {
+    const pre = bot.q && text.length < 3500 ? bot.q(text) : bot.url; // long requests are pasted instead
+    window.open(pre, '_blank', 'noopener');
+    setAiStatus(ok
+      ? `Copied ${plural(docs.length, 'file name')}. ${pre !== bot.url ? `It should already be typed into ${bot.label}; if the box is empty, paste it` : `In ${bot.label}, paste it into the message box`} (Ctrl+V, or long-press → Paste). When it answers, copy its code block and paste it below.`
+      : 'Couldn’t copy automatically. Use “Copy only” and try again.', !ok);
+  } else {
+    setAiStatus(ok ? `Copied ${plural(docs.length, 'file name')} — paste it into any AI chat.` : 'Couldn’t copy automatically.', !ok);
+  }
+}
+
+function cleanUrl(u) {
+  try {
+    const x = new URL(u);
+    for (const k of [...x.searchParams.keys()]) if (/^utm_/i.test(k)) x.searchParams.delete(k);
+    x.hash = '';
+    return x.toString();
+  } catch { return ''; }
+}
+const sameUrl = (a, b) => {
+  const n = (u) => { try { const x = new URL(u); return (x.hostname.replace(/^www\./, '') + decodeURIComponent(x.pathname).replace(/\/+$/, '') + x.search).toLowerCase(); } catch { return u; } };
+  return n(a) === n(b);
+};
+function parseAiAnswer(text) {
+  const out = [];
+  for (let line of String(text || '').split(/\r?\n/)) {
+    line = line.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, '').trim();
+    if (!line.includes('|') || !/(PAGE|FILE)\s*:/i.test(line)) continue;
+    const parts = line.split('|').map((s) => s.trim());
+    const name = parts[0].replace(/^[`"'*“”]+|[`"'*“”]+$/g, '').trim();
+    const get = (k) => {
+      const p = parts.find((x) => new RegExp(`^\\**${k}\\**\\s*:`, 'i').test(x));
+      const m = p && p.match(/https?:\/\/[^\s<>()"'`\[\]]+/i);
+      return m ? cleanUrl(m[0].replace(/[.,;:]+$/, '')) : '';
+    };
+    if (name) out.push({ name, page: get('PAGE'), file: get('FILE') });
+  }
+  return out;
+}
+
+async function linkWithAi() {
+  const items = parseAiAnswer($('#aiAnswer').value);
+  if (!items.length) {
+    setAiStatus('Couldn’t find any answer lines in that. Paste the AI’s whole code block — lines look like <i>name | PAGE: … | FILE: …</i>', true);
+    return;
+  }
+  const norm = (s) => String(s).toLowerCase().replace(/\.[a-z0-9]{2,5}$/, '').replace(/[^a-z0-9]+/g, '');
+  const pool = S.docs.filter((d) => !d.status);
+  const rows = [];
+  const groups = { ok: [], warn: [], bad: [], unsure: [], already: [], missing: [] };
+  const jobs = [];
+  const used = new Set();
+  for (const it of items) {
+    const d = pool.find((x) => x.name === it.name && !used.has(x)) || pool.find((x) => norm(x.name) === norm(it.name) && !used.has(x));
+    if (!d) { groups.missing.push({ info: true, title: it.name, detail: 'No file with this name in your library.' }); continue; }
+    used.add(d);
+    if (d.source) { groups.already.push({ info: true, title: d.name, detail: `Already linked to ${esc(d.source.page || d.source.url)}` }); continue; }
+    if (!it.page && !it.file) { groups.unsure.push({ info: true, title: d.name, detail: 'The AI couldn’t find a reliable source, so it’s left as is.' }); continue; }
+    jobs.push({ d, ...it });
+  }
+  $('#linkDlg').close();
+  const t = toast(`Checking ${plural(jobs.length, 'link')}…`, { ms: Infinity });
+  const pages = new Map();
+  const readPage = (url) => {
+    if (!pages.has(url)) pages.set(url, (async () => {
+      const { res, finalUrl } = await remoteFetch(url);
+      if (!res.ok) throw new Error(`the page answered ${res.status}`);
+      return documentLinks(await res.text(), finalUrl || url);
+    })());
+    return pages.get(url);
+  };
+  // Which link on a page is this file? By name, then by its opening words (titles are usually on page 1),
+  // then by exact file size.
+  const sizes = new Map();
+  const words = (x) => String(x || '').toLowerCase().replace(/\.[a-z0-9]{2,5}$/, '').split(/[^a-z0-9]+/).filter((w) => w.length > 1 || /\d/.test(w));
+  const findOnPage = async (pageUrl, links, d) => {
+    const me = { text: d.name, url: 'https://x/' + encodeURIComponent(d.name), size: d.size };
+    const best = links.map((l) => ({ l, s: linkSimilarity(me, { text: l.text, url: l.url }) })).sort((a, b) => b.s - a.s)[0];
+    if (best && best.s >= SAME_DOC_SCORE) return best.l;
+    const opening = new Set(words(((S.texts.get(d.id) || []).find((p) => p.trim()) || '').slice(0, 600)));
+    const byText = links.map((l) => {
+      const w = [...new Set(words(l.text))].filter((x) => !['pdf', 'kb', 'mb', 'the', 'of', 'and'].includes(x));
+      return { l, n: w.length, s: w.length ? w.filter((x) => opening.has(x)).length / w.length : 0 };
+    }).filter((x) => x.n >= 2 && x.s >= 0.8).sort((a, b) => b.s - a.s || b.n - a.n);
+    if (byText.length && (byText.length === 1 || byText[0].s > byText[1].s || byText[0].n > byText[1].n)) return byText[0].l;
+    if (!d.size) return null;
+    if (!sizes.has(pageUrl)) sizes.set(pageUrl, (async () => {
+      const m = new Map();
+      await Promise.all(links.slice(0, 80).map(async (l) => { try { m.set(l, (await remoteInfo(l.url)).size); } catch {} }));
+      return m;
+    })());
+    const m = await sizes.get(pageUrl);
+    return links.find((l) => m.get(l) === d.size) || null;
+  };
+  let done = 0;
+  const check = async (job) => {
+    const { d } = job;
+    let page = job.page;
+    let file = job.file;
+    if (page && looksLikeDocument(page) && !file) { file = page; page = ''; }
+    let link = null;
+    let pageInfo = null;
+    let pageNote = '';
+    if (page) {
+      try {
+        pageInfo = await readPage(page);
+        link = file && pageInfo.links.find((l) => sameUrl(l.url, file));
+        if (!link) link = await findOnPage(page, pageInfo.links, d);
+        if (!link) pageNote = file ? 'the page doesn’t list this file, so only the file is linked' : '';
+      } catch (err) {
+        pageNote = `couldn’t open its page (${esc(helperProblem(err))})`;
+        pageInfo = null;
+      }
+    }
+    const url = link?.url || file;
+    if (!url) { groups.bad.push({ info: true, tone: 'warn', title: d.name, detail: `Not linked — ${pageNote || 'no download link for this file on that page'}.` }); return; }
+    let info;
+    try {
+      info = await remoteInfo(url);
+      if (info.status >= 400) throw new Error(`the site answered ${info.status}`);
+      if (d.kind !== 'html' && info.type === 'text/html') throw new Error('the link opens a web page, not the document');
+    } catch (err) {
+      groups.bad.push({ info: true, tone: 'warn', title: d.name, detail: `Not linked — ${esc(helperProblem(err))}` });
+      return;
+    }
+    const same = d.size && info.size && d.size === info.size;
+    const odd = !same && d.size && info.size && (info.size < d.size * 0.4 || info.size > d.size * 2.5);
+    const watchPage = link && pageInfo ? page : '';
+    let host = '';
+    try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {}
+    const bits = [
+      `<b>${esc(host)}</b>`,
+      link?.text && `“${esc(link.text)}”${link.note ? ` (${esc(link.note)})` : ''}`,
+      same ? 'same file as yours ✓'
+        : odd ? `<b>very different size — ${fmtSize(info.size)} vs your ${fmtSize(d.size)}; may not be the same document</b>`
+        : info.size && d.size ? `the site’s copy is ${fmtSize(info.size)}, yours ${fmtSize(d.size)} — ↻ will offer the site’s version` : '',
+      watchPage && 'its page will be watched for new editions',
+      pageNote,
+    ].filter(Boolean);
+    const row = {
+      kind: 'ailink', doc: d, page: watchPage, links: pageInfo?.links || [], pageTitle: pageInfo?.title || '',
+      // a matching file keeps the site's version tags; a different one is checked properly on the next ↻
+      source: { url, linkText: link?.text || '', note: link?.note || '', page: watchPage, etag: same ? info.etag : '', lastModified: same ? info.lastModified : '', size: same ? info.size : d.size || 0, checkedAt: Date.now() },
+      checked: !odd, tone: odd ? 'warn' : same ? 'up' : '', title: d.name, detail: bits.join(' · '),
+    };
+    (odd ? groups.warn : groups.ok).push(row);
+  };
+  let i = 0;
+  const worker = async () => {
+    while (i < jobs.length) {
+      const job = jobs[i++];
+      await check(job);
+      done++;
+      t.firstChild.textContent = `Checking links… ${done} of ${jobs.length}`;
+    }
+  };
+  try { await Promise.all([worker(), worker(), worker(), worker()]); } finally { t._hide(); }
+
+  const sec = (header, list) => { if (list.length) rows.push({ header }, ...list); };
+  sec('Ready to link', groups.ok);
+  sec('Check these first', groups.warn);
+  sec('Couldn’t use these links', groups.bad);
+  sec('The AI wasn’t sure', groups.unsure);
+  sec('Already linked', groups.already);
+  sec('Not in your library', groups.missing);
+  const picks = groups.ok.length + groups.warn.length;
+  const res = await review({
+    title: picks ? 'Link these files' : 'No links to use',
+    intro: picks ? 'Every link below was opened and checked. Ticked files get linked; your copies stay as they are until you press ↻ to check for updates.' : 'None of the links could be used. The details are below.',
+    rows,
+    options: picks && groups.ok.concat(groups.warn).some((r) => r.page) ? [{ id: 'watch', label: 'Also watch their pages, to catch editions published under a new file name and new documents', checked: true }] : [],
+    apply: picks ? 'Link' : 'OK',
+  });
+  if (!res || !picks) return;
+  const picked = rows.filter((r) => r.kind === 'ailink' && res.picked.has(r));
+  const watch = !!res.options.watch;
+  for (const r of picked) r.doc.source = { ...r.source, page: watch ? r.page : '' };
+  if (watch) {
+    const byPage = new Map();
+    for (const r of picked) if (r.page) (byPage.get(r.page) || byPage.set(r.page, []).get(r.page)).push(r);
+    for (const [url, list] of byPage) {
+      if (S.folders.some((f) => f.source?.url === url) || S.watch.some((w) => w.url === url)) continue;
+      // documents already on the page that you don't have aren't offered as "new" later; only ones added after today
+      const linked = new Set(S.docs.filter((d) => d.source).map((d) => d.source.url));
+      const src = { url, title: list[0].pageTitle, ignored: list[0].links.map((l) => l.url).filter((u) => !linked.has(u)), checkedAt: Date.now() };
+      const fids = [...new Set(list.map((r) => r.doc.folderId || ''))];
+      const f = fids.length === 1 && fids[0] && folderById(fids[0]);
+      if (f && !f.source) f.source = src;
+      else S.watch.push(src);
+    }
+    saveFolders();
+    saveWatch();
+  }
+  await store.updateDocs(picked.map((r) => stripMeta(r.doc))).catch(() => {});
+  renderLibrary();
+  toast(`Linked ${plural(picked.length, 'file')}. Press ↻ next to Library any time to check for updates.`, { ms: 6000 });
 }
 
 // ---------- checking linked sources for updates ----------
@@ -2264,6 +2562,21 @@ function bind() {
   $('#checkAllBtn').addEventListener('click', () => checkSources());
   $('#linkForm').addEventListener('submit', (e) => { e.preventDefault(); submitLink(); });
   $('#linkDlg').addEventListener('click', (e) => { if (e.target === e.currentTarget || e.target.closest('[data-close]')) $('#linkDlg').close(); });
+  $('#aiGo').addEventListener('click', () => aiCopy(true));
+  $('#aiCopy').addEventListener('click', () => aiCopy(false));
+  $('#aiBot').addEventListener('change', (e) => { prefs.aiBot = e.target.value; savePrefs(); });
+  $('#aiCheck').addEventListener('click', () => linkWithAi());
+  $('#aiPaste').addEventListener('click', async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text.trim()) throw new Error('empty');
+      $('#aiAnswer').value = text;
+      linkWithAi();
+    } catch {
+      $('#aiAnswer').focus();
+      setAiStatus('Paste the answer into the box (Ctrl+V, or long-press → Paste), then press Check &amp; link.');
+    }
+  });
   $('#autoCheck').addEventListener('change', (e) => { prefs.autoCheck = e.target.checked; savePrefs(); });
   $('#helperTest').addEventListener('click', async () => {
     const v = $('#helperUrl').value.trim();

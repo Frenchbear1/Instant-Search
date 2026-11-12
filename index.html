@@ -171,6 +171,17 @@
       </label>
       <p class="link-status" id="linkStatus" aria-live="polite"></p>
       <div class="link-actions"><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="submit" id="linkGo">Add</button></div>
+      <details class="helper ai-box" id="aiBox">
+        <summary>Find links for my files with AI <span id="aiState"></span></summary>
+        <p>For files you added yourself. This copies their names (with folders, page counts and opening words) plus a request asking the AI to find each one’s official source online — checked, not guessed. Paste it into the AI, then paste its answer back here. Every link is opened and checked again before anything is linked.</p>
+        <label class="link-row">Files <select id="aiWhich"></select></label>
+        <label class="link-row">AI <select id="aiBot"></select></label>
+        <div class="link-actions"><button class="btn" type="button" id="aiCopy">Copy only</button><button class="btn primary" type="button" id="aiGo">Copy &amp; open</button></div>
+        <label class="ai-label" for="aiAnswer">Paste the AI’s answer here</label>
+        <textarea id="aiAnswer" rows="4" spellcheck="false" placeholder="file name | PAGE: https://… | FILE: https://…"></textarea>
+        <p class="link-status" id="aiStatus" aria-live="polite"></p>
+        <div class="link-actions"><button class="btn" type="button" id="aiPaste">Paste from clipboard</button><button class="btn primary" type="button" id="aiCheck">Check &amp; link</button></div>
+      </details>
       <details class="helper" id="helperBox">
         <summary>Download helper <span id="helperState"></span></summary>
         <p>Many official sites (including faa.gov) don’t let other websites download their files directly. A small free helper you run on Cloudflare fetches them for this app. Setup takes about 5 minutes — <a href="https://github.com/Frenchbear1/Instant-Search#linking-documents-from-websites" target="_blank" rel="noopener">step-by-step guide</a>.</p>

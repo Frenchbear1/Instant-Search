@@ -40,6 +40,17 @@ You can add a document straight from a link, or link a whole page that lists doc
 - **Dropping in a newer copy yourself** works too: add a file with the same name as one in your library, or the same name with a different edition letter or year, and you're shown both page counts and sizes and asked whether to replace it.
 - Optional: *Check linked sources for updates once a day when I open the app* (in the Download helper section of the link dialog).
 
+### Linking files you already have, with an AI's help
+
+For documents you added yourself, **▾ → Find links for my files with AI…** (also at the bottom of the web link window) saves looking up each source by hand:
+
+1. Pick which files (all unlinked files, only ticked ones, or one folder) and an AI (ChatGPT, Claude, Gemini, Perplexity or Copilot).
+2. **Copy & open** copies a request listing those files — with their folders, page counts and opening words — and opens the AI. Short requests are typed in for you; otherwise just paste. The request tells the AI to search the web, give only links it confirmed from the official publisher, and write NOT FOUND instead of guessing.
+3. Copy the AI's code block, come back and press **Paste from clipboard** (or paste into the box and press **Check & link**).
+4. The app opens every link itself before using it: the page must list the document, the file must download as a document, and its size is compared with your copy. Anything that doesn't add up is left unticked or set aside. Your copies aren't replaced. Press ↻ later and you'll be offered the site's version if it's different.
+
+Links go through the download helper, so sites that aren't in its `ALLOWED_SITES` list (faa.gov only by default) will show as "couldn't use". Add the site there if you trust it.
+
 ### Setting up the download helper (one time, free, about 5 minutes)
 
 Browsers don't let one website read files from another unless that site allows it, and faa.gov doesn't. The helper is a tiny program on Cloudflare's free plan that fetches the files for the app. It only fetches from the sites you list in it.
