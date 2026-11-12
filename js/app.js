@@ -1755,7 +1755,7 @@ async function pickFromPage(pageUrl, links, title, folderId) {
     title: 'Add documents from this page',
     intro: 'Pick the documents to add. Pages often list a whole book <i>and</i> its parts (chapters, or changes already included in a combined edition) — those parts start unticked so you don’t get every hit twice.',
     rows,
-    options: [{ id: 'link', label: 'Keep the folder linked to this page, so “Check for updates” also finds new and replaced documents', checked: true }],
+    options: [{ id: 'link', label: 'Keep watching this page — when you press ↻ Check for updates, also look here for newly added documents and new editions (recommended)', checked: true }],
     apply: 'Add',
   });
   if (!res) return;
