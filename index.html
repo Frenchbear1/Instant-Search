@@ -46,6 +46,7 @@
           <button class="mini" id="newFolderBtn" title="New folder" aria-label="New folder"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v5M9.5 13.5h5"/></svg></button>
         </span>
       </div>
+      <div class="arrange-bar" id="arrangeBar" hidden></div>
       <div class="lib-zone">
         <ul class="lib" id="lib"></ul>
         <div class="lib-out">Drop here to take it out of its folder</div>
@@ -116,7 +117,14 @@
           <div class="view" id="results"></div>
           <div class="view" id="reader"></div>
         </div>
-        <nav class="outline" id="outline" aria-label="Pages with hits" hidden></nav>
+        <nav class="outline" id="outline" aria-label="Pages with hits" hidden>
+          <label class="ol-sort" id="olSort"><span>Sort</span><select id="sortSel2" aria-label="Sort results">
+            <option value="library">Library order</option>
+            <option value="hits">Documents with most hits</option>
+            <option value="pages">Pages with most hits</option>
+          </select></label>
+          <div id="outlineList"></div>
+        </nav>
       </div>
       <div class="dock" id="dock" hidden>
         <div class="seg small" id="viewSeg" role="group" aria-label="Page view" hidden>

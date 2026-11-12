@@ -55,6 +55,7 @@ const I = {
   image: '<svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>',
   text: '<svg viewBox="0 0 24 24"><path d="M5 6h14M5 10h14M5 14h14M5 18h9"/></svg>',
   warn: '<svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9L2 18a2 2 0 0 0 1.7 3h16.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>',
+  arrows: '<svg viewBox="0 0 24 24"><path d="M8 9l4-4 4 4M8 15l4 4 4-4"/></svg>',
   minus: '<svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg>',
   fitW: '<svg viewBox="0 0 24 24"><path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4"/></svg>',
   fitP: '<svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="1.5"/></svg>',
@@ -883,10 +884,12 @@ function updateSummary() {
 }
 
 function updateOutline() {
-  const box = $('#outline');
   const v = active;
-  if (!S.matcher || !v.list.length) { setHTML(box, ''); box.hidden = true; return; }
-  box.hidden = false;
+  const nav = $('#outline');
+  const box = $('#outlineList');
+  if (!S.matcher || !v.list.length) { setHTML(box, ''); nav.hidden = true; return; }
+  nav.hidden = false;
+  $('#olSort').hidden = v.kind !== 'results';
   if (v.list[0]?.flat) {
     const rows = v.list.slice(0, 400).map((R, i) => {
       const p = R.pages[0];
@@ -927,7 +930,9 @@ function docItemHtml(d, hits) {
     <label class="chk" title="Include in search"><input type="checkbox" ${d.enabled ? 'checked' : ''} ${d.status ? 'disabled' : ''}><span></span></label>
     <button class="lib-main" data-act="read" title="${esc(d.name)}"><span class="lname">${esc(d.name)}</span><span class="lmeta"><span class="ftype ${d.kind}">${KIND_LABEL[d.kind]}</span>${meta}</span></button>
     ${h}
-    <span class="lib-acts"><button class="mini" data-act="solo" title="Search only this document">${I.target}</button><button class="mini" data-act="dmenu" title="More">${I.more}</button></span>
+    ${arrange?.kind === 'doc' && (arrange.group || null) === (d.folderId && folderById(d.folderId) ? d.folderId : null) && !d.status
+      ? arrowsHtml(`data-doc="${d.id}"`)
+      : `<span class="lib-acts"><button class="mini" data-act="solo" title="Search only this document">${I.target}</button><button class="mini" data-act="dmenu" title="More">${I.more}</button></span>`}
     ${d.status === 'indexing' ? `<div class="prog"><i style="width:${Math.round((d.progress || 0) * 100)}%"></i></div>` : ''}
   </li>`;
 }
@@ -952,11 +957,11 @@ function renderLibrary() {
     const fh = docs.reduce((a, d) => a + (d.enabled ? hits.get(d.id) || 0 : 0), 0);
     const badge = S.matcher && on ? `<span class="lhits${fh ? '' : ' zero'}">${fmt(fh)}</span>` : '';
     return `<li class="folder${f.collapsed ? ' collapsed' : ''}${rd.length && !on ? ' off' : ''}" data-fid="${f.id}">
-      <div class="folder-row" draggable="true">
+      <div class="folder-row">
         <label class="chk" title="Search this whole folder"><input type="checkbox" data-fchk ${rd.length && on === rd.length ? 'checked' : ''} ${on && on < rd.length ? 'data-indet' : ''} ${rd.length ? '' : 'disabled'}><span></span></label>
         <button class="folder-main" data-act="fold" title="${esc(f.name)}"><span class="chev">${I.chevron}</span><span class="ficon">${I.folder}</span><span class="fname">${esc(f.name)}</span>${f.source ? `<span class="linked" title="${esc(sourceTitle(f.source))}">${I.link}</span>` : ''}<span class="fcount">${fmt(docs.length)}</span></button>
         ${badge}
-        <span class="lib-acts"><button class="mini" data-act="fsolo" title="Search only this folder">${I.target}</button><button class="mini" data-act="fadd" title="Add documents to this folder">${I.plus}</button><button class="mini" data-act="fmenu" title="More">${I.more}</button></span>
+        ${arrange?.kind === 'folder' ? arrowsHtml(`data-folder="${f.id}"`) : `<span class="lib-acts"><button class="mini" data-act="fsolo" title="Search only this folder">${I.target}</button><button class="mini" data-act="fadd" title="Add documents to this folder">${I.plus}</button><button class="mini" data-act="fmenu" title="More">${I.more}</button></span>`}
       </div>
       <ul class="folder-docs">${docs.length ? docs.map((d) => docItemHtml(d, hits)).join('') : '<li class="folder-empty">Drag documents here, or use + to add files</li>'}</ul>
     </li>`;
@@ -987,6 +992,9 @@ function renderLibrary() {
     }
   }
   $('#libEmpty').hidden = !!(S.docs.length || S.folders.length);
+  const bar = $('#arrangeBar');
+  bar.hidden = !arrange;
+  if (arrange) setHTML(bar, `<span>${arrange.kind === 'folder' ? 'Arranging folders' : `Arranging ${arrange.group ? `“${esc(folderById(arrange.group)?.name || '')}”` : 'documents not in a folder'}`}</span><button class="btn primary sm" data-done>Done</button>`);
   $('#checkAllBtn').hidden = !hasSources();
 }
 
@@ -998,6 +1006,7 @@ function syncControls() {
   $('#wordBtn').setAttribute('aria-pressed', String(prefs.wholeWord));
   $('#wordBtn').disabled = prefs.mode === 'regex';
   $('#sortSel').value = prefs.sort;
+  $('#sortSel2').value = prefs.sort;
   $$('#viewSeg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === prefs.view)));
   $('#viewSeg').hidden = !S.docs.some(hasOriginal);
   document.body.classList.toggle('compact', !!prefs.compact);
@@ -1045,7 +1054,7 @@ function trackPosition() {
     const chip = $(`#outline :is(.ol-p, .ol-row)[data-doc="${art.dataset.doc}"][data-n="${art.dataset.n}"]`);
     if (chip) {
       chip.classList.add('on');
-      const box = $('#outline');
+      const box = $('#outlineList');
       const cr = chip.getBoundingClientRect();
       const br = box.getBoundingClientRect();
       if (cr.top < br.top + 30 || cr.bottom > br.bottom - 10) box.scrollTop += cr.top - br.top - br.height / 2;
@@ -1137,7 +1146,6 @@ function startRename(fid) {
   if (!f || !li) return;
   li.classList.remove('collapsed');
   const span = $('.fname', li);
-  li.querySelector('.folder-row')?.setAttribute('draggable', 'false');
   const input = el('input', 'frename');
   renaming = { fid, input };
   input.value = f.name;
@@ -1204,41 +1212,82 @@ function moveDocs(ids, fid) {
   toast(`${docs.length === 1 ? `“${docs[0].name}”` : plural(docs.length, 'document')} moved ${f ? `to “${f.name}”` : 'out of the folder'}`, { ms: 2200 });
 }
 
-// Put a document right before/after another one (or at the end of a folder / the library).
-function placeDoc(id, fid, refId, before) {
+// ---------- moving documents and folders up and down ----------
+// Documents move only among their neighbours: the same folder, or the documents not in a folder.
+function docGroup(d) {
+  const fid = d.folderId && folderById(d.folderId) ? d.folderId : null;
+  return S.docs.filter((x) => (x.folderId && folderById(x.folderId) ? x.folderId : null) === fid);
+}
+let reorderTimer;
+function afterReorder() {
+  renderLibrary();
+  clearTimeout(reorderTimer);
+  reorderTimer = setTimeout(() => runSearch({ keepScroll: true }), 350); // results follow, without lag while clicking arrows
+}
+function moveDoc(id, to) {
   const d = docById(id);
   if (!d) return;
-  const movedFolder = (d.folderId || null) !== (fid || null);
-  S.docs.splice(S.docs.indexOf(d), 1);
-  let at = S.docs.length;
-  if (refId) {
-    const ref = docById(refId);
-    if (ref) at = S.docs.indexOf(ref) + (before ? 0 : 1);
-  } else if (fid) {
-    // end of that folder
-    const inFolder = S.docs.filter((x) => x.folderId === fid);
-    if (inFolder.length) at = S.docs.indexOf(inFolder[inFolder.length - 1]) + 1;
-  }
-  S.docs.splice(at, 0, d);
-  d.folderId = fid || null;
+  const group = docGroup(d);
+  const from = group.indexOf(d);
+  const target = Math.max(0, Math.min(group.length - 1, to === 'top' ? 0 : to === 'bottom' ? group.length - 1 : from + to));
+  if (target === from) return;
+  const rest = group.filter((x) => x !== d);
+  rest.splice(target, 0, d);
+  // write the group back into the same slots it occupied in the full list
+  const slots = S.docs.map((x, i) => (group.includes(x) ? i : -1)).filter((i) => i >= 0);
+  slots.forEach((slot, k) => (S.docs[slot] = rest[k]));
   S.docs.forEach((x, i) => (x.order = i + 1));
   store.updateDocs(S.docs.filter(searchable).map(stripMeta)).catch(() => {});
-  const f = fid && folderById(fid);
-  if (f?.collapsed && movedFolder) { f.collapsed = false; saveFolders(); }
-  runSearch({ keepScroll: true });
-  if (movedFolder) toast(`“${d.name}” moved ${f ? `to “${f.name}”` : 'out of the folder'}`, { ms: 2000 });
+  flashRow(`#lib .lib-item[data-id="${id}"]`);
+  afterReorder();
 }
-
-function reorderFolder(id, refId, before) {
-  const f = folderById(id);
-  const ref = folderById(refId);
-  if (!f || !ref || f === ref) return;
-  S.folders.splice(S.folders.indexOf(f), 1);
-  S.folders.splice(S.folders.indexOf(ref) + (before ? 0 : 1), 0, f);
+function moveFolder(fid, to) {
+  const f = folderById(fid);
+  if (!f) return;
+  const from = S.folders.indexOf(f);
+  const target = Math.max(0, Math.min(S.folders.length - 1, to === 'top' ? 0 : to === 'bottom' ? S.folders.length - 1 : from + to));
+  if (target === from) return;
+  S.folders.splice(from, 1);
+  S.folders.splice(target, 0, f);
   S.folders.forEach((x, i) => (x.order = i + 1));
   saveFolders();
-  runSearch({ keepScroll: true });
+  flashRow(`#lib .folder[data-fid="${fid}"] > .folder-row`);
+  afterReorder();
 }
+function flashRow(sel) {
+  requestAnimationFrame(() => {
+    const r = $(sel);
+    if (!r) return;
+    r.classList.remove('moved');
+    void r.offsetWidth;
+    r.classList.add('moved');
+    r.scrollIntoView({ block: 'nearest' });
+  });
+}
+function moveMenuItems(kind, id) {
+  const go = (to) => () => (kind === 'doc' ? moveDoc(id, to) : moveFolder(id, to));
+  return [
+    { header: kind === 'doc' ? 'Move within its list' : 'Move folder' },
+    { label: 'To the top', icon: I.up, run: go('top') },
+    { label: 'Up 10', icon: I.up, run: go(-10) },
+    { label: 'Up 5', icon: I.up, run: go(-5) },
+    { label: 'Down 5', icon: I.down, run: go(5) },
+    { label: 'Down 10', icon: I.down, run: go(10) },
+    { label: 'To the bottom', icon: I.down, run: go('bottom') },
+    { sep: true },
+    { label: 'Arrange with arrows…', icon: I.arrows, run: () => startArrange(kind, id) },
+  ];
+}
+// "Arrange with arrows": up/down buttons appear on every row of that list until you press Done.
+let arrange = null; // { kind: 'doc'|'folder', group: folderId|null }
+function startArrange(kind, id) {
+  arrange = kind === 'folder' ? { kind } : { kind, group: (() => { const d = docById(id); return d?.folderId && folderById(d.folderId) ? d.folderId : null; })() };
+  if (arrange.group) { const f = folderById(arrange.group); if (f.collapsed) { f.collapsed = false; saveFolders(); } }
+  renderLibrary();
+  toast('Use the arrows to move things up and down. Press Done when finished.', { ms: 3000 });
+}
+function endArrange() { arrange = null; renderLibrary(); }
+const arrowsHtml = (attr) => `<span class="arrange-btns"><button class="mini" data-arr="up" ${attr} title="Move up">${I.up}</button><button class="mini" data-arr="down" ${attr} title="Move down">${I.down}</button></span>`;
 
 let pendingFolderDelete = null;
 function deleteFolder(fid) {
@@ -1332,6 +1381,7 @@ function docMenu(anchor, id) {
       }] : []),
     ] : []),
     { sep: true },
+    { label: 'Move up or down…', icon: I.arrows, disabled: !!d.status, run: () => setTimeout(() => openMenu(anchor, moveMenuItems('doc', id)), 0) },
     ...moveItems(d),
     { sep: true },
     { label: 'Remove from library', icon: I.trash, danger: true, run: () => removeDoc(id) },
@@ -1349,6 +1399,7 @@ function folderMenu(anchor, fid) {
     ] : []),
     { label: 'Search only this folder', icon: I.target, run: () => soloFolder(fid) },
     { label: 'Rename', icon: I.pencil, run: () => startRename(fid) },
+    { label: 'Move up or down…', icon: I.arrows, run: () => setTimeout(() => openMenu(anchor, moveMenuItems('folder', fid)), 0) },
     { sep: true },
     { label: 'Delete folder (keeps documents)', icon: I.trash, danger: true, run: () => deleteFolder(fid) },
   ]);
@@ -1607,7 +1658,7 @@ function compareVersions(doc, pages, size) {
 }
 
 // ---------- review dialog ----------
-function review({ title, intro = '', rows, options = [], apply = 'Apply', cancel = 'Cancel' }) {
+function review({ title, intro = '', rows, options = [], apply = 'Apply', cancel = 'Cancel', danger = false }) {
   return new Promise((resolve) => {
     const dlg = $('#reviewDlg');
     $('#reviewTitle').textContent = title;
@@ -1628,7 +1679,8 @@ function review({ title, intro = '', rows, options = [], apply = 'Apply', cancel
     $('#reviewOpts').innerHTML = options.map((o) => o.choices
       ? `<div class="choice" role="radiogroup" aria-label="${esc(o.label || '')}">${o.label ? `<div class="choice-title">${esc(o.label)}</div>` : ''}${o.choices.map((c) => `<label class="choice-card"><input type="radio" name="opt-${o.id}" data-c="${o.id}" value="${c.value}" ${c.value === o.value ? 'checked' : ''}><span><b>${esc(c.label)}</b><em>${esc(c.hint || '')}</em></span></label>`).join('')}</div>`
       : `<label class="check-row"><input type="checkbox" data-o="${o.id}" ${o.checked ? 'checked' : ''}> ${esc(o.label)}</label>`).join('');
-    const actionable = rows.some((r) => !r.header && !r.info);
+    const actionable = danger || rows.some((r) => !r.header && !r.info);
+    $('#reviewApply').classList.toggle('danger', danger);
     $('#reviewApply').hidden = !actionable;
     $('#reviewApply').textContent = apply;
     $('#reviewCancel').textContent = actionable ? cancel : 'Close';
@@ -1650,7 +1702,11 @@ function review({ title, intro = '', rows, options = [], apply = 'Apply', cancel
       $('#reviewCount').textContent = all.length ? `${fmt(on)} of ${fmt(all.length)} selected` : '';
     };
     count();
-    $('#reviewList').onchange = count;
+    $('#reviewList').onchange = (e) => {
+      const i = Number(e.target.dataset?.i);
+      if (rows[i]?.all) $$('#reviewList input').forEach((x) => (x.checked = e.target.checked));
+      count();
+    };
     $('#reviewBulk').onclick = (e) => {
       const b = e.target.closest('[data-all]');
       if (!b) return;
@@ -1669,7 +1725,8 @@ function review({ title, intro = '', rows, options = [], apply = 'Apply', cancel
     };
     $('#reviewApply').onclick = () => finish(true);
     $('#reviewCancel').onclick = () => finish(false);
-    dlg.onclose = () => finish(false);
+    // a previous dialog's close event can arrive after this one opened; only a real close cancels
+    dlg.onclose = () => { if (!dlg.open) finish(false); };
     closeMenu();
     dlg.showModal();
   });
@@ -1999,6 +2056,76 @@ async function checkSources({ docIds = null, folderIds = null, quiet = false } =
   if (updated || added) toast([updated && `Updated ${plural(updated, 'document')}`, added && `adding ${plural(added, 'new document')}`].filter(Boolean).join(' · '));
 }
 
+// ---------- removing things: pick folders, documents or everything, then confirm ----------
+async function openClear() {
+  if (!S.docs.length && !S.folders.length) { toast('Your library is already empty'); return; }
+  const docCount = (fid) => S.docs.filter((d) => d.folderId === fid).length;
+  const rows = [
+    { header: 'Everything' },
+    { all: true, title: 'The whole app', detail: `All ${plural(S.docs.length, 'document')}${S.folders.length ? `, ${plural(S.folders.length, 'folder')}` : ''} and linked pages`, tone: 'warn' },
+  ];
+  if (S.folders.length) {
+    rows.push({ header: 'Folders' });
+    for (const f of S.folders) rows.push({ folder: f, title: f.name, detail: `Folder and its ${plural(docCount(f.id), 'document')}` });
+  }
+  rows.push({ header: 'Documents' });
+  for (const d of orderedDocs()) {
+    const f = folderOf(d);
+    rows.push({ doc: d, title: d.name, detail: `${plural(S.texts.get(d.id)?.length || d.pages || 0, 'page')}${f ? ` · in “${esc(f.name)}”` : ''}` });
+  }
+  const res = await review({
+    title: 'Remove from this device',
+    intro: 'Tick what to remove. You’ll be asked to confirm next.',
+    rows,
+    options: [{ id: 'settings', label: 'If removing the whole app: also reset settings (theme, shortcuts, zoom, download helper)' }],
+    apply: 'Continue',
+  });
+  if (!res) return;
+  const everything = [...res.picked].some((r) => r.all);
+  const folders = everything ? [...S.folders] : [...res.picked].filter((r) => r.folder).map((r) => r.folder);
+  const docs = new Set(everything ? S.docs : [...res.picked].filter((r) => r.doc).map((r) => r.doc));
+  for (const f of folders) S.docs.filter((d) => d.folderId === f.id).forEach((d) => docs.add(d));
+  if (!docs.size && !folders.length) return;
+  const what = everything ? 'everything in Instant Search' : [docs.size && plural(docs.size, 'document'), folders.length && plural(folders.length, 'folder')].filter(Boolean).join(' and ');
+  const sure = await review({
+    title: `Remove ${what}?`,
+    intro: `This deletes ${everything ? 'all your documents, folders and linked pages' : 'them'} from this device and can’t be undone.${everything && res.options.settings ? ' Your settings will be reset too.' : ''}`,
+    rows: [],
+    apply: 'Remove',
+    danger: true,
+  });
+  if (!sure) return;
+  finalizeRemoval();
+  if (active === reader && docs.has(docById(reader.docId))) closeReader();
+  if (everything) {
+    S.docs.forEach((d) => { closePdf(d.id); forgetHtml(d.id); });
+    S.docs = [];
+    S.folders = [];
+    S.watch = [];
+    saveWatch();
+    S.texts.clear();
+    await store.clear().catch(() => {});
+    if (res.options.settings) {
+      for (const k of ['instant-search:prefs', 'instant-search:helper', 'instant-search:direct', 'instant-search:watched']) try { localStorage.removeItem(k); } catch {}
+      location.reload();
+      return;
+    }
+  } else {
+    for (const d of docs) {
+      closePdf(d.id);
+      forgetHtml(d.id);
+      S.texts.delete(d.id);
+      store.deleteDoc(d.id).catch(() => {});
+    }
+    S.docs = S.docs.filter((d) => !docs.has(d));
+    for (const f of folders) store.deleteFolder(f.id).catch(() => {});
+    S.folders = S.folders.filter((f) => !folders.includes(f));
+  }
+  runSearch({ keepScroll: true });
+  updateStorage();
+  toast(`Removed ${what}`);
+}
+
 // ---------- toasts ----------
 function toast(msg, { action, onAction, ms = 4200 } = {}) {
   const t = el('div', 'toast', `<span>${esc(msg)}</span>`);
@@ -2104,6 +2231,7 @@ function bind() {
   $('#caseBtn').addEventListener('click', () => { prefs.matchCase = !prefs.matchCase; runSearch(); });
   $('#wordBtn').addEventListener('click', () => { prefs.wholeWord = !prefs.wholeWord; runSearch(); });
   $('#sortSel').addEventListener('change', (e) => { prefs.sort = e.target.value; runSearch(); });
+  $('#sortSel2').addEventListener('change', (e) => { prefs.sort = e.target.value; runSearch(); });
   $('#viewSeg').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-view]');
     if (b) setView(b.dataset.view);
@@ -2197,6 +2325,13 @@ function bind() {
     if (li) setEnabled(li.dataset.id, e.target.checked);
   });
   $('#lib').addEventListener('click', (e) => {
+    const arr = e.target.closest('button[data-arr]');
+    if (arr) {
+      e.stopPropagation();
+      const step = (arr.dataset.arr === 'up' ? -1 : 1) * (e.shiftKey ? 5 : 1);
+      if (arr.dataset.doc) moveDoc(arr.dataset.doc, step); else moveFolder(arr.dataset.folder, step);
+      return;
+    }
     const b = e.target.closest('button[data-act]');
     if (!b) return;
     e.stopPropagation();
@@ -2220,137 +2355,64 @@ function bind() {
     if (f) { e.preventDefault(); startRename(f.closest('.folder').dataset.fid); }
   });
 
-  // drag to reorder documents and folders, move documents between folders, drop files onto a folder
+  // drag a document into a folder (or out of one); drop files from the computer onto a folder
   const DOC_TYPE = 'application/x-instant-doc';
-  const FOLDER_TYPE = 'application/x-instant-folder';
   const zone = $('.lib-zone');
-  const line = el('div', 'drop-line');
-  let drag = null; // { kind: 'doc'|'folder', id }
+  let dragId = null;
   $('#lib').addEventListener('dragstart', (e) => {
     const li = e.target.closest?.('.lib-item');
-    const frow = !li && e.target.closest?.('.folder-row');
-    if (li) {
-      drag = { kind: 'doc', id: li.dataset.id };
-      e.dataTransfer.setData(DOC_TYPE, li.dataset.id);
-      e.dataTransfer.setData('text/plain', docById(li.dataset.id)?.name || '');
-      li.classList.add('dragged');
-      document.body.classList.add('moving-doc');
-    } else if (frow) {
-      const fol = frow.closest('.folder');
-      drag = { kind: 'folder', id: fol.dataset.fid };
-      e.dataTransfer.setData(FOLDER_TYPE, fol.dataset.fid);
-      e.dataTransfer.setData('text/plain', folderById(fol.dataset.fid)?.name || '');
-      fol.classList.add('dragged');
-      document.body.classList.add('moving-folder');
-    } else return;
+    if (!li) return;
+    dragId = li.dataset.id;
+    e.dataTransfer.setData(DOC_TYPE, li.dataset.id);
+    e.dataTransfer.setData('text/plain', docById(li.dataset.id)?.name || '');
     e.dataTransfer.effectAllowed = 'move';
+    li.classList.add('dragged');
+    document.body.classList.add('moving-doc');
   });
-  const endDrag = () => {
-    drag = null;
+  const clearDropMarks = () => $$('.drop-on').forEach((x) => x.classList.remove('drop-on'));
+  $('#lib').addEventListener('dragend', () => {
+    dragId = null;
     $$('.dragged').forEach((x) => x.classList.remove('dragged'));
-    document.body.classList.remove('moving-doc', 'moving-folder');
+    document.body.classList.remove('moving-doc');
     clearDropMarks();
-  };
-  $('#lib').addEventListener('dragend', endDrag);
-  const clearDropMarks = () => { $$('.drop-on').forEach((x) => x.classList.remove('drop-on')); line.remove(); };
-  const showLine = (target, before) => {
-    clearDropMarks();
-    const zr = zone.getBoundingClientRect();
-    const r = target.getBoundingClientRect();
-    line.style.top = `${(before ? r.top : r.bottom) - zr.top + zone.scrollTop - 1}px`;
-    line.style.left = `${r.left - zr.left + 6}px`;
-    line.style.width = `${r.width - 12}px`;
-    zone.append(line);
-  };
-  const highlight = (t) => { if (!t.classList.contains('drop-on') || line.isConnected) { clearDropMarks(); t.classList.add('drop-on'); } };
-
-  // Work out where a drop at this point would go.
-  const spot = (e) => {
-    const y = e.clientY;
-    if (drag?.kind === 'folder') {
-      const fol = e.target.closest?.('.folder');
-      const folders = $$('#lib > .folder');
-      if (!folders.length) return null;
-      if (fol) {
-        if (fol.dataset.fid === drag.id) return { none: true };
-        const row = fol.querySelector('.folder-row').getBoundingClientRect();
-        return { kind: 'folder', ref: fol.dataset.fid, before: y < row.top + row.height / 2, el: fol };
-      }
-      const last = folders[folders.length - 1];
-      return { kind: 'folder', ref: last.dataset.fid, before: false, el: last }; // below the folders
-    }
-    const item = e.target.closest?.('.lib-item');
-    if (item) {
-      if (drag && item.dataset.id === drag.id) return { none: true };
-      const r = item.getBoundingClientRect();
-      return { kind: 'between', ref: item.dataset.id, before: y < r.top + r.height / 2, fid: item.closest('.folder')?.dataset.fid || null, el: item };
-    }
-    const fol = e.target.closest?.('.folder');
-    if (fol) return { kind: 'into', fid: fol.dataset.fid, el: fol };
-    return { kind: 'into', fid: null, el: zone };
-  };
-
-  // While dragging near the top or bottom of the library, scroll it.
-  const autoScroll = (y) => {
-    const zr = zone.getBoundingClientRect();
-    const edge = 56;
-    if (y < zr.top + edge) zone.scrollTop -= Math.ceil((zr.top + edge - y) / 3);
-    else if (y > zr.bottom - edge) zone.scrollTop += Math.ceil((y - (zr.bottom - edge)) / 3);
-  };
+  });
+  const dropTarget = (e) => e.target.closest?.('.folder') || zone;
   zone.addEventListener('dragover', (e) => {
-    const types = [...e.dataTransfer.types];
-    const internal = types.includes(DOC_TYPE) || types.includes(FOLDER_TYPE);
+    const types = e.dataTransfer.types;
+    const internal = types.includes(DOC_TYPE);
     if (!internal && !types.includes('Files')) return;
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = internal ? 'move' : 'copy';
-    autoScroll(e.clientY);
-    if (!internal) { highlight(e.target.closest?.('.folder') || zone); return; } // files from the computer: into a folder or the library
-    const s = spot(e);
-    if (!s || s.none) { clearDropMarks(); return; }
-    if (s.kind === 'into') highlight(s.el);
-    else showLine(s.el, s.before);
-    const f = s.kind === 'into' && s.fid && folderById(s.fid);
-    if (f?.collapsed && !s.el._openTimer) s.el._openTimer = setTimeout(() => { if (s.el.classList.contains('drop-on')) toggleFolder(f.id); s.el._openTimer = null; }, 700);
+    const t = dropTarget(e);
+    if (zone._over === t) return; // nothing changed: no work on every mouse move
+    zone._over = t;
+    clearDropMarks();
+    t.classList.add('drop-on');
+    const f = t.classList.contains('folder') && folderById(t.dataset.fid);
+    if (f?.collapsed) setTimeout(() => { if (zone._over === t && f.collapsed) toggleFolder(f.id); }, 700);
   });
   zone.addEventListener('dragleave', (e) => {
-    if (!e.relatedTarget || !zone.contains(e.relatedTarget)) clearDropMarks();
+    if (!e.relatedTarget || !zone.contains(e.relatedTarget)) { clearDropMarks(); zone._over = null; }
   });
   zone.addEventListener('drop', (e) => {
-    const types = [...e.dataTransfer.types];
-    const internal = types.includes(DOC_TYPE) || types.includes(FOLDER_TYPE);
+    const types = e.dataTransfer.types;
+    const internal = types.includes(DOC_TYPE);
     if (!internal && !types.includes('Files')) return;
     e.preventDefault();
     e.stopPropagation();
-    const s = internal ? spot(e) : null;
-    const filesTarget = !internal ? (e.target.closest?.('.folder')?.dataset.fid || null) : null;
-    const d = drag;
+    const t = dropTarget(e);
+    const fid = t.classList.contains('folder') ? t.dataset.fid : null;
     clearDropMarks();
-    document.body.classList.remove('dragging');
+    zone._over = null;
+    document.body.classList.remove('dragging', 'moving-doc');
     resetDrag();
-    endDrag();
-    if (!internal) { importDrop(e.dataTransfer, filesTarget || undefined); return; }
-    if (!s || s.none || !d) return;
-    if (d.kind === 'folder') reorderFolder(d.id, s.ref, s.before);
-    else if (s.kind === 'between') placeDoc(d.id, s.fid, s.ref, s.before);
-    else placeDoc(d.id, s.fid, null, false);
+    if (internal) moveDocs([dragId || e.dataTransfer.getData(DOC_TYPE)], fid);
+    else importDrop(e.dataTransfer, fid || undefined);
   });
   $('#toggleAll').addEventListener('click', toggleAll);
-  $('#clearLib').addEventListener('click', async () => {
-    if (!S.docs.length && !S.folders.length) return;
-    if (!confirm(`Remove all ${plural(S.docs.length, 'document')}${S.folders.length ? ` and ${plural(S.folders.length, 'folder')}` : ''} from this device?`)) return;
-    finalizeRemoval();
-    S.docs.forEach((d) => closePdf(d.id));
-    S.docs = [];
-    S.folders = [];
-    S.watch = [];
-    saveWatch();
-    S.texts.clear();
-    await store.clear().catch(() => {});
-    if (active === reader) closeReader();
-    runSearch();
-    updateStorage();
-  });
+  $('#clearLib').addEventListener('click', openClear);
+  $('#arrangeBar').addEventListener('click', (e) => { if (e.target.closest('[data-done]')) endArrange(); });
 
   // results + reader (delegated)
   const onMain = (e) => {
