@@ -13,7 +13,9 @@ Open `index.html` from any static host (it's a plain static site, no build step)
 - **Hit navigation**: Enter / Shift+Enter (or N, F3) steps through every hit across every document. Click a coloured term above the results to step through just that word.
 - **Text or Original** for PDFs: read clean reflowed text, or the real PDF page with highlights drawn on it. Switch globally or per page. Scanned pages with no text show the original automatically.
 - **Read whole** opens one document in full, still highlighted, with a page jump box.
+- **Folders**: tick a folder to search everything in it (or untick it to leave it out); the target button searches only that folder. Drag documents between folders, drop files from your computer straight onto a folder, add a whole folder from your computer (it becomes a library folder), or use the ▾ next to Add documents to import a batch into an existing or new folder. Deleting a folder keeps its documents.
 - Library checkboxes choose which documents are searched; the target button searches only one.
+- **Sort** results by library order, documents with most hits, or pages with most hits (every hit page across all documents, ranked).
 - Light and dark themes, phone layout, keyboard shortcuts (see the ? button in the app).
 
 ## Files

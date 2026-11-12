@@ -28,16 +28,28 @@
         <span class="logo" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M20 20l-4.6-4.6"/></svg></span>
         <span>Instant Search</span>
       </div>
-      <button class="btn primary add" id="addBtn">
-        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add documents
-      </button>
+      <div class="split">
+        <button class="btn primary add" id="addBtn">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add documents
+        </button>
+        <button class="btn primary add-more" id="addMoreBtn" aria-label="More ways to add" title="Add into a folder, or add a whole folder">
+          <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+      </div>
       <input type="file" id="fileInput" multiple hidden />
+      <input type="file" id="dirInput" webkitdirectory multiple hidden />
       <div class="lib-head">
         <span>Library <em id="libCount"></em></span>
-        <button class="link" id="toggleAll" hidden>All</button>
+        <span class="lib-head-acts">
+          <button class="link" id="toggleAll" hidden>All</button>
+          <button class="mini" id="newFolderBtn" title="New folder" aria-label="New folder"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v5M9.5 13.5h5"/></svg></button>
+        </span>
       </div>
-      <ul class="lib" id="lib"></ul>
-      <p class="lib-empty" id="libEmpty">No documents yet. Drop files anywhere on the page.</p>
+      <div class="lib-zone">
+        <ul class="lib" id="lib"></ul>
+        <div class="lib-out">Drop here to take it out of its folder</div>
+        <p class="lib-empty" id="libEmpty">No documents yet. Drop files or whole folders anywhere on the page.</p>
+      </div>
       <div class="side-foot">
         <span id="storage">Stored only on this device</span>
         <button class="link danger" id="clearLib">Clear</button>
@@ -105,7 +117,8 @@
     <div class="drop-card">
       <svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
       <b>Drop to add to your library</b>
-      <span>PDF · Word · Text · Markdown · HTML</span>
+      <span>PDF · Word · Text · Markdown · HTML — whole folders too</span>
+      <span class="drop-tip">Drop onto a folder in the library to add straight into it</span>
     </div>
   </div>
   <div class="toasts" id="toasts" aria-live="polite"></div>

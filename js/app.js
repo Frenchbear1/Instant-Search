@@ -27,6 +27,15 @@ const I = {
   image: '<svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>',
   text: '<svg viewBox="0 0 24 24"><path d="M5 6h14M5 10h14M5 14h14M5 18h9"/></svg>',
   warn: '<svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9L2 18a2 2 0 0 0 1.7 3h16.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>',
+  folder: '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+  folderPlus: '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v5M9.5 13.5h5"/></svg>',
+  chevron: '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>',
+  more: '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>',
+  plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+  check: '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+  pencil: '<svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>',
+  trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>',
+  out: '<svg viewBox="0 0 24 24"><path d="M15 12H4M8 8l-4 4 4 4M14 5h5a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1h-5"/></svg>',
   upload: '<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>',
 };
 
@@ -41,6 +50,7 @@ const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(pr
 // ---------- state ----------
 const S = {
   docs: [],            // metadata, library order
+  folders: [],         // { id, name, order, collapsed }
   texts: new Map(),    // docId -> page texts
   matcher: null,
   error: null,
@@ -59,6 +69,15 @@ let active = results;
 
 const q = $('#q');
 const docById = (id) => S.docs.find((d) => d.id === id);
+const folderById = (id) => S.folders.find((f) => f.id === id);
+const folderOf = (d) => (d.folderId && folderById(d.folderId)) || null;
+// Library order: each folder's documents in folder order, then documents not in a folder.
+function orderedDocs() {
+  const by = new Map(S.folders.map((f) => [f.id, []]));
+  const loose = [];
+  for (const d of S.docs) (by.get(d.folderId) || loose).push(d);
+  return [...S.folders.flatMap((f) => by.get(f.id)), ...loose];
+}
 const pkey = (docId, n) => `${docId}:${n}`;
 // A group is one section: a whole document, or (when ranking pages) a single hit page and the pages opened around it.
 const groupKey = (R, doc) => (R?.flat ? pkey(doc.id, R.pages[0].n) : doc.id);
@@ -112,7 +131,7 @@ function runSearch({ keepScroll = false } = {}) {
   S.matcher = m && !m.error ? m : null;
   S.terms = S.matcher ? S.matcher.terms : [];
 
-  assign(results, computeHits(S.docs.filter((d) => d.enabled && searchable(d))));
+  assign(results, computeHits(orderedDocs().filter((d) => d.enabled && searchable(d))));
   results.revealed.clear();
   results.dirty = true;
   if (active === results) renderView(results, { keepScroll });
@@ -396,7 +415,9 @@ function docHeadHtml(v, doc, R) {
   const btn = v.kind === 'results'
     ? `<button class="chip-btn" data-act="read" title="Read the whole document">${I.book}Read whole</button>`
     : '';
-  return `<span class="ftype ${doc.kind}">${KIND_LABEL[doc.kind] || 'TXT'}</span><h2 title="${esc(doc.name)}">${esc(doc.name)}</h2><span class="dstat">${stat}</span><span class="grow"></span>${btn}`;
+  const f = folderOf(doc);
+  const where = f ? `<span class="dfolder" title="Folder">${I.folder}${esc(f.name)}</span>` : '';
+  return `<span class="ftype ${doc.kind}">${KIND_LABEL[doc.kind] || 'TXT'}</span><h2 title="${esc(doc.name)}">${esc(doc.name)}</h2>${where}<span class="dstat">${stat}</span><span class="grow"></span>${btn}`;
 }
 
 function sectionEl(v, doc, R) {
@@ -481,7 +502,7 @@ function emptyLibrary() {
 }
 
 function idleState() {
-  const ready = S.docs.filter(searchable);
+  const ready = orderedDocs().filter(searchable);
   const scope = ready.filter((d) => d.enabled);
   const pages = scope.reduce((a, d) => a + (S.texts.get(d.id)?.length || 0), 0);
   const busy = S.docs.filter((d) => d.status).length;
@@ -743,29 +764,60 @@ function updateOutline() {
   trackPosition();
 }
 
+function docItemHtml(d, hits) {
+  const count = S.texts.get(d.id)?.length || d.pages || 0;
+  const meta = d.status === 'indexing'
+    ? `Reading… ${d.progress ? Math.round(d.progress * 100) + '%' : ''}`
+    : `${plural(count, 'page')}${d.noText ? ' · <span class="warn">no text found</span>' : ''}`;
+  const h = S.matcher && d.enabled && !d.status ? `<span class="lhits${hits.get(d.id) ? '' : ' zero'}">${fmt(hits.get(d.id) || 0)}</span>` : '';
+  return `<li class="lib-item${d.enabled ? ' on' : ''}${d.status ? ' busy' : ''}${reader.docId === d.id && active === reader ? ' reading' : ''}" data-id="${d.id}" draggable="${d.status ? 'false' : 'true'}">
+    <label class="chk" title="Include in search"><input type="checkbox" ${d.enabled ? 'checked' : ''} ${d.status ? 'disabled' : ''}><span></span></label>
+    <button class="lib-main" data-act="read" title="${esc(d.name)}"><span class="lname">${esc(d.name)}</span><span class="lmeta"><span class="ftype ${d.kind}">${KIND_LABEL[d.kind]}</span>${meta}</span></button>
+    ${h}
+    <span class="lib-acts"><button class="mini" data-act="solo" title="Search only this document">${I.target}</button><button class="mini" data-act="dmenu" title="More">${I.more}</button></span>
+    ${d.status === 'indexing' ? `<div class="prog"><i style="width:${Math.round((d.progress || 0) * 100)}%"></i></div>` : ''}
+  </li>`;
+}
+
+let renaming = null; // { fid, input } while a folder name is being edited
 function renderLibrary() {
   const ul = $('#lib');
+  const hadFocus = renaming && document.activeElement === renaming.input;
   const hits = new Map();
   for (const R of results.list) hits.set(R.doc.id, (hits.get(R.doc.id) || 0) + R.hits);
   const ready = S.docs.filter(searchable);
   $('#libCount').textContent = S.docs.length ? `${ready.filter((d) => d.enabled).length}/${ready.length}` : '';
   $('#toggleAll').hidden = ready.length < 2;
   $('#toggleAll').textContent = ready.every((d) => d.enabled) ? 'None' : 'All';
-  ul.innerHTML = S.docs.map((d) => {
-    const count = S.texts.get(d.id)?.length || d.pages || 0;
-    const meta = d.status === 'indexing'
-      ? `Reading… ${d.progress ? Math.round(d.progress * 100) + '%' : ''}`
-      : `${plural(count, 'page')}${d.noText ? ' · <span class="warn">no text found</span>' : ''}`;
-    const h = S.matcher && d.enabled && !d.status ? `<span class="lhits${hits.get(d.id) ? '' : ' zero'}">${fmt(hits.get(d.id) || 0)}</span>` : '';
-    return `<li class="lib-item${d.enabled ? ' on' : ''}${d.status ? ' busy' : ''}${reader.docId === d.id && active === reader ? ' reading' : ''}" data-id="${d.id}">
-      <label class="chk" title="Include in search"><input type="checkbox" ${d.enabled ? 'checked' : ''} ${d.status ? 'disabled' : ''}><span></span></label>
-      <button class="lib-main" data-act="read" title="${esc(d.name)}"><span class="lname">${esc(d.name)}</span><span class="lmeta"><span class="ftype ${d.kind}">${KIND_LABEL[d.kind]}</span>${meta}</span></button>
-      ${h}
-      <span class="lib-acts"><button class="mini" data-act="solo" title="Search only this document">${I.target}</button><button class="mini" data-act="remove" title="Remove">${I.x}</button></span>
-      ${d.status === 'indexing' ? `<div class="prog"><i style="width:${Math.round((d.progress || 0) * 100)}%"></i></div>` : ''}
+  const by = new Map(S.folders.map((f) => [f.id, []]));
+  const loose = [];
+  for (const d of S.docs) (by.get(d.folderId) || loose).push(d);
+  const folderHtml = S.folders.map((f) => {
+    const docs = by.get(f.id);
+    const rd = docs.filter(searchable);
+    const on = rd.filter((d) => d.enabled).length;
+    const fh = docs.reduce((a, d) => a + (d.enabled ? hits.get(d.id) || 0 : 0), 0);
+    const badge = S.matcher && on ? `<span class="lhits${fh ? '' : ' zero'}">${fmt(fh)}</span>` : '';
+    return `<li class="folder${f.collapsed ? ' collapsed' : ''}${rd.length && !on ? ' off' : ''}" data-fid="${f.id}">
+      <div class="folder-row">
+        <label class="chk" title="Search this whole folder"><input type="checkbox" data-fchk ${rd.length && on === rd.length ? 'checked' : ''} ${on && on < rd.length ? 'data-indet' : ''} ${rd.length ? '' : 'disabled'}><span></span></label>
+        <button class="folder-main" data-act="fold" title="${esc(f.name)}"><span class="chev">${I.chevron}</span><span class="ficon">${I.folder}</span><span class="fname">${esc(f.name)}</span><span class="fcount">${fmt(docs.length)}</span></button>
+        ${badge}
+        <span class="lib-acts"><button class="mini" data-act="fsolo" title="Search only this folder">${I.target}</button><button class="mini" data-act="fadd" title="Add documents to this folder">${I.plus}</button><button class="mini" data-act="fmenu" title="More">${I.more}</button></span>
+      </div>
+      <ul class="folder-docs">${docs.length ? docs.map((d) => docItemHtml(d, hits)).join('') : '<li class="folder-empty">Drag documents here, or use + to add files</li>'}</ul>
     </li>`;
   }).join('');
-  $('#libEmpty').hidden = !!S.docs.length;
+  ul.innerHTML = folderHtml + loose.map((d) => docItemHtml(d, hits)).join('');
+  $$('[data-indet]', ul).forEach((i) => (i.indeterminate = true));
+  if (renaming) {
+    const span = $(`.folder[data-fid="${renaming.fid}"] .fname`, ul);
+    if (span) {
+      span.replaceWith(renaming.input);
+      if (hadFocus) renaming.input.focus({ preventScroll: true });
+    }
+  }
+  $('#libEmpty').hidden = !!(S.docs.length || S.folders.length);
 }
 
 function syncControls() {
@@ -881,24 +933,276 @@ function toggleAll() {
 }
 const stripMeta = ({ status, progress, ...m }) => m;
 
+// ---------- folders ----------
+const saveFolders = () => store.putFolders(S.folders).catch(() => {});
+
+function createFolder(name) {
+  let base = (name || 'New folder').trim() || 'New folder';
+  let n = base;
+  for (let i = 2; S.folders.some((f) => f.name.toLowerCase() === n.toLowerCase()); i++) n = `${base} ${i}`;
+  const f = { id: uid(), name: n, order: S.folders.reduce((m, x) => Math.max(m, x.order || 0), 0) + 1, collapsed: false };
+  S.folders.push(f);
+  saveFolders();
+  renderLibrary();
+  return f;
+}
+
+function folderNamed(name) {
+  return S.folders.find((f) => f.name.toLowerCase() === name.toLowerCase()) || createFolder(name);
+}
+
+function startRename(fid) {
+  const f = folderById(fid);
+  const li = $(`#lib .folder[data-fid="${fid}"]`);
+  if (!f || !li) return;
+  li.classList.remove('collapsed');
+  const span = $('.fname', li);
+  const input = el('input', 'frename');
+  renaming = { fid, input };
+  input.value = f.name;
+  input.setAttribute('aria-label', 'Folder name');
+  span.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    renaming = null;
+    const v = input.value.trim();
+    if (save && v && v !== f.name) {
+      f.name = v;
+      saveFolders();
+      refreshInPlace(results);
+    }
+    renderLibrary();
+  };
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') finish(true);
+    else if (e.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => setTimeout(() => { if (!input.isConnected || document.activeElement !== input) finish(true); }, 0));
+  input.addEventListener('click', (e) => e.stopPropagation());
+}
+
+function toggleFolder(fid) {
+  const f = folderById(fid);
+  if (!f) return;
+  f.collapsed = !f.collapsed;
+  saveFolders();
+  $(`#lib .folder[data-fid="${fid}"]`)?.classList.toggle('collapsed', f.collapsed);
+}
+
+function setFolderEnabled(fid, on) {
+  const docs = S.docs.filter((d) => d.folderId === fid && searchable(d));
+  for (const d of docs) d.enabled = on;
+  store.updateDocs(docs.map(stripMeta)).catch(() => {});
+  runSearch();
+}
+
+function soloFolder(fid) {
+  const ready = S.docs.filter(searchable);
+  const inside = (d) => d.folderId === fid;
+  if (!ready.some(inside)) { toast('This folder is empty'); return; }
+  const already = ready.every((d) => d.enabled === inside(d));
+  for (const d of ready) d.enabled = already ? true : inside(d);
+  store.updateDocs(ready.map(stripMeta)).catch(() => {});
+  runSearch();
+  if (!already) toast(`Searching only the “${folderById(fid).name}” folder`);
+}
+
+function moveDocs(ids, fid) {
+  const docs = ids.map(docById).filter(Boolean).filter((d) => (d.folderId || null) !== (fid || null));
+  if (!docs.length) return;
+  for (const d of docs) d.folderId = fid || null;
+  store.updateDocs(docs.filter(searchable).map(stripMeta)).catch(() => {});
+  const f = fid && folderById(fid);
+  if (f?.collapsed) { f.collapsed = false; saveFolders(); }
+  runSearch({ keepScroll: true });
+  toast(`${docs.length === 1 ? `“${docs[0].name}”` : plural(docs.length, 'document')} moved ${f ? `to “${f.name}”` : 'out of the folder'}`, { ms: 2200 });
+}
+
+let pendingFolderDelete = null;
+function deleteFolder(fid) {
+  const f = folderById(fid);
+  if (!f) return;
+  const docs = S.docs.filter((d) => d.folderId === fid);
+  const idx = S.folders.indexOf(f);
+  S.folders.splice(idx, 1);
+  for (const d of docs) d.folderId = null;
+  store.deleteFolder(fid).catch(() => {});
+  store.updateDocs(docs.filter(searchable).map(stripMeta)).catch(() => {});
+  runSearch({ keepScroll: true });
+  pendingFolderDelete = { f, idx, ids: docs.map((d) => d.id) };
+  toast(`Deleted folder “${f.name}”${docs.length ? ` — its ${plural(docs.length, 'document')} ${docs.length === 1 ? 'is' : 'are'} kept` : ''}`, {
+    action: 'Undo',
+    ms: 6000,
+    onAction: () => {
+      const p = pendingFolderDelete;
+      if (!p) return;
+      pendingFolderDelete = null;
+      S.folders.splice(p.idx, 0, p.f);
+      saveFolders();
+      const back = p.ids.map(docById).filter(Boolean);
+      for (const d of back) d.folderId = p.f.id;
+      store.updateDocs(back.filter(searchable).map(stripMeta)).catch(() => {});
+      runSearch({ keepScroll: true });
+    },
+  });
+}
+
+// ---------- popover menu ----------
+function closeMenu() {
+  $('.pop-menu')?.remove();
+  $$('.menu-open').forEach((x) => x.classList.remove('menu-open'));
+}
+function openMenu(anchor, items) {
+  const wasOpen = anchor.classList.contains('menu-open');
+  closeMenu();
+  if (wasOpen) return;
+  const m = el('div', 'pop-menu');
+  m.setAttribute('role', 'menu');
+  for (const it of items) {
+    if (it.sep) { m.append(el('div', 'menu-sep')); continue; }
+    if (it.header) { m.append(el('div', 'menu-head', esc(it.header))); continue; }
+    const b = el('button', `menu-item${it.danger ? ' danger' : ''}${it.checked ? ' checked' : ''}`, `${it.icon || '<span class="menu-gap"></span>'}<span>${esc(it.label)}</span>${it.checked ? I.check : ''}`);
+    b.setAttribute('role', 'menuitem');
+    if (it.disabled) b.disabled = true;
+    b.addEventListener('click', (e) => { e.stopPropagation(); closeMenu(); it.run(); });
+    m.append(b);
+  }
+  document.body.append(m);
+  anchor.classList.add('menu-open');
+  const r = anchor.getBoundingClientRect();
+  const w = m.offsetWidth;
+  const h = m.offsetHeight;
+  let left = Math.min(r.left, innerWidth - w - 8);
+  let top = r.bottom + 6;
+  if (top + h > innerHeight - 8) top = Math.max(8, r.top - h - 6);
+  m.style.left = Math.max(8, left) + 'px';
+  m.style.top = top + 'px';
+  m.querySelector('.menu-item:not(:disabled)')?.focus({ preventScroll: true });
+}
+
+function moveItems(d) {
+  const items = [{ header: 'Move to' }];
+  for (const f of S.folders) items.push({ label: f.name, icon: I.folder, checked: d.folderId === f.id, run: () => moveDocs([d.id], f.id) });
+  if (folderOf(d)) items.push({ label: 'No folder', icon: I.out, run: () => moveDocs([d.id], null) });
+  items.push({ label: 'New folder…', icon: I.folderPlus, run: () => { const f = createFolder(); moveDocs([d.id], f.id); startRename(f.id); } });
+  return items;
+}
+
+function docMenu(anchor, id) {
+  const d = docById(id);
+  if (!d) return;
+  openMenu(anchor, [
+    { label: 'Read whole document', icon: I.book, disabled: !!d.status, run: () => { openReader(id); closeDrawer(); } },
+    { label: 'Search only this', icon: I.target, disabled: !!d.status, run: () => solo(id) },
+    { sep: true },
+    ...moveItems(d),
+    { sep: true },
+    { label: 'Remove from library', icon: I.trash, danger: true, run: () => removeDoc(id) },
+  ]);
+}
+
+function folderMenu(anchor, fid) {
+  openMenu(anchor, [
+    { label: 'Add documents here…', icon: I.plus, run: () => pickFiles(fid) },
+    { label: 'Search only this folder', icon: I.target, run: () => soloFolder(fid) },
+    { label: 'Rename', icon: I.pencil, run: () => startRename(fid) },
+    { sep: true },
+    { label: 'Delete folder (keeps documents)', icon: I.trash, danger: true, run: () => deleteFolder(fid) },
+  ]);
+}
+
+function addMenu(anchor) {
+  const items = [
+    { label: 'Add files…', icon: I.plus, run: () => pickFiles(null) },
+    { label: 'Add a folder from your computer…', icon: I.folderPlus, run: () => $('#dirInput').click() },
+    { label: 'Add files into a new folder…', icon: I.folderPlus, run: () => pickFiles('new') },
+  ];
+  if (S.folders.length) {
+    items.push({ sep: true }, { header: 'Add files into' });
+    for (const f of S.folders) items.push({ label: f.name, icon: I.folder, run: () => pickFiles(f.id) });
+  }
+  openMenu(anchor, items);
+}
+
+const byName = (a, b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name, undefined, { numeric: true, sensitivity: 'base' });
+
+// where the next file-picker selection goes: null (no folder), a folder id, or 'new'
+let pickTarget = null;
+function pickFiles(target) {
+  pickTarget = target;
+  $('#fileInput').click();
+}
+
+// Dropped items can include whole folders; read them recursively.
+function droppedEntries(dt) {
+  const entries = [...(dt.items || [])].filter((i) => i.kind === 'file').map((i) => i.webkitGetAsEntry?.()).filter(Boolean);
+  return entries.length ? entries : null;
+}
+async function readEntries(entries) {
+  const groups = [];
+  const loose = [];
+  const walk = async (entry, out) => {
+    if (entry.isFile) {
+      out.push(await new Promise((res, rej) => entry.file(res, rej)));
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      for (;;) {
+        const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+        if (!batch.length) break;
+        for (const e of batch) await walk(e, out);
+      }
+    }
+  };
+  for (const e of entries) {
+    if (e.isDirectory) {
+      const files = [];
+      await walk(e, files);
+      groups.push({ name: e.name, files });
+    } else await walk(e, loose);
+  }
+  return { groups, loose };
+}
+
+// target: folder id, null, or undefined (= no folder; dropped folders become library folders)
+async function importDrop(dt, target) {
+  const entries = droppedEntries(dt);
+  if (!entries) { addFiles(dt.files, target || null); return; }
+  const { groups, loose } = await readEntries(entries);
+  if (loose.length) addFiles(loose, target || null);
+  for (const g of groups) {
+    const usable = g.files.filter((f) => kindOf(f.name)).sort(byName);
+    if (!usable.length) { toast(`No supported documents in “${g.name}”`); continue; }
+    const fid = target || folderNamed(g.name).id;
+    addFiles(usable, fid, { quietSkip: true });
+    if (usable.length < g.files.length) toast(`Skipped ${plural(g.files.length - usable.length, 'file')} in “${g.name}” that aren’t documents`);
+  }
+}
+
 // ---------- adding files ----------
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
 let queue = Promise.resolve();
 
-function addFiles(fileList) {
+function addFiles(fileList, folderId = null, { quietSkip = false } = {}) {
   const files = [...fileList];
   if (!files.length) return;
   const bad = files.filter((f) => !kindOf(f.name));
-  if (bad.length) toast(`Skipped ${bad.length === 1 ? `“${bad[0].name}”` : plural(bad.length, 'file')} — use PDF, Word (.docx), text, Markdown or HTML`);
+  if (bad.length && !quietSkip) toast(`Skipped ${bad.length === 1 ? `“${bad[0].name}”` : plural(bad.length, 'file')} — use PDF, Word (.docx), text, Markdown or HTML`);
   let order = S.docs.reduce((m, d) => Math.max(m, d.order || 0), 0);
   for (const file of files) {
     const kind = kindOf(file.name);
     if (!kind) continue;
-    if (S.docs.some((d) => d.name === file.name && d.size === file.size)) {
-      toast(`“${file.name}” is already in your library`);
+    const dup = S.docs.find((d) => d.name === file.name && d.size === file.size);
+    if (dup) {
+      if (folderId && dup.folderId !== folderId) moveDocs([dup.id], folderId);
+      else toast(`“${file.name}” is already in your library`);
       continue;
     }
-    const meta = { id: uid(), name: file.name, kind, size: file.size, addedAt: Date.now(), order: ++order, enabled: true, status: 'indexing', progress: 0, v: EXTRACTOR_VERSION };
+    const meta = { id: uid(), name: file.name, kind, size: file.size, addedAt: Date.now(), order: ++order, enabled: true, status: 'indexing', progress: 0, v: EXTRACTOR_VERSION, folderId: folderId || null };
     S.docs.push(meta);
     queue = queue.then(() => ingest(file, meta));
   }
@@ -919,6 +1223,7 @@ async function ingest(file, meta) {
     meta.pages = pages.length;
     meta.noText = meta.kind === 'pdf' && chars < pages.length * 25;
     if (!S.docs.includes(meta)) return; // removed while reading
+    if (meta.folderId && !folderById(meta.folderId)) meta.folderId = null;
     delete meta.status;
     delete meta.progress;
     S.texts.set(meta.id, pages);
@@ -954,7 +1259,9 @@ function toast(msg, { action, onAction, ms = 4200 } = {}) {
     b.onclick = () => { onAction(); t.remove(); };
     t.append(b);
   }
-  $('#toasts').append(t);
+  const box = $('#toasts');
+  box.append(t);
+  while (box.children.length > 3) box.firstElementChild.remove();
   setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 300); }, ms);
 }
 
@@ -970,8 +1277,37 @@ function applyTheme() {
 // ---------- events ----------
 function bind() {
   $('#fileInput').accept = ACCEPT;
-  $('#fileInput').addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; });
-  $('#addBtn').addEventListener('click', () => $('#fileInput').click());
+  $('#fileInput').addEventListener('change', (e) => {
+    const files = [...e.target.files];
+    e.target.value = '';
+    if (!files.length) return;
+    let target = pickTarget;
+    pickTarget = null;
+    if (target === 'new') { target = createFolder().id; addFiles(files, target); startRename(target); }
+    else addFiles(files, target && folderById(target) ? target : null);
+  });
+  $('#dirInput').addEventListener('change', (e) => {
+    const files = [...e.target.files];
+    e.target.value = '';
+    const groups = new Map();
+    for (const f of files) {
+      const top = (f.webkitRelativePath || '').split('/')[0] || 'Imported';
+      if (!groups.has(top)) groups.set(top, []);
+      groups.get(top).push(f);
+    }
+    for (const [name, list] of groups) {
+      const usable = list.filter((f) => kindOf(f.name)).sort(byName);
+      if (!usable.length) { toast(`No supported documents in “${name}”`); continue; }
+      addFiles(usable, folderNamed(name).id, { quietSkip: true });
+      if (usable.length < list.length) toast(`Added ${plural(usable.length, 'document')} from “${name}” · skipped ${plural(list.length - usable.length, 'other file')}`);
+    }
+  });
+  $('#addBtn').addEventListener('click', () => pickFiles(null));
+  $('#addMoreBtn').addEventListener('click', (e) => { e.stopPropagation(); addMenu(e.currentTarget); });
+  $('#newFolderBtn').addEventListener('click', () => { const f = createFolder(); startRename(f.id); });
+  document.addEventListener('click', (e) => { if (!e.target.closest('.pop-menu')) closeMenu(); });
+  addEventListener('resize', closeMenu);
+  $('.sidebar').addEventListener('scroll', closeMenu, true);
 
   q.addEventListener('input', () => { $('#clearBtn').hidden = !q.value; scheduleSearch(); });
   q.addEventListener('keydown', (e) => {
@@ -1018,25 +1354,91 @@ function bind() {
 
   // library
   $('#lib').addEventListener('change', (e) => {
+    if (e.target.type !== 'checkbox') return;
+    if (e.target.hasAttribute('data-fchk')) { setFolderEnabled(e.target.closest('.folder').dataset.fid, e.target.checked); return; }
     const li = e.target.closest('.lib-item');
-    if (li && e.target.type === 'checkbox') setEnabled(li.dataset.id, e.target.checked);
+    if (li) setEnabled(li.dataset.id, e.target.checked);
   });
   $('#lib').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-act]');
-    const li = e.target.closest('.lib-item');
-    if (!b || !li) return;
-    const id = li.dataset.id;
-    if (b.dataset.act === 'read') { if (!docById(id)?.status) { openReader(id); closeDrawer(); } }
-    else if (b.dataset.act === 'solo') solo(id);
-    else if (b.dataset.act === 'remove') removeDoc(id);
+    if (!b) return;
+    e.stopPropagation();
+    const act = b.dataset.act;
+    const fid = b.closest('.folder')?.dataset.fid;
+    const id = b.closest('.lib-item')?.dataset.id;
+    if (id) {
+      if (act === 'read') { if (!docById(id)?.status) { openReader(id); closeDrawer(); } }
+      else if (act === 'solo') solo(id);
+      else if (act === 'dmenu') docMenu(b, id);
+      return;
+    }
+    if (!fid) return;
+    if (act === 'fold') toggleFolder(fid);
+    else if (act === 'fsolo') soloFolder(fid);
+    else if (act === 'fadd') pickFiles(fid);
+    else if (act === 'fmenu') folderMenu(b, fid);
+  });
+  $('#lib').addEventListener('dblclick', (e) => {
+    const f = e.target.closest('.folder-main');
+    if (f) { e.preventDefault(); startRename(f.closest('.folder').dataset.fid); }
+  });
+
+  // drag documents between folders; drop files from the computer onto a folder
+  const DOC_TYPE = 'application/x-instant-doc';
+  let dragIds = null;
+  $('#lib').addEventListener('dragstart', (e) => {
+    const li = e.target.closest?.('.lib-item');
+    if (!li) return;
+    dragIds = [li.dataset.id];
+    e.dataTransfer.setData(DOC_TYPE, li.dataset.id);
+    e.dataTransfer.setData('text/plain', docById(li.dataset.id)?.name || '');
+    e.dataTransfer.effectAllowed = 'move';
+    li.classList.add('dragged');
+    document.body.classList.add('moving-doc');
+  });
+  $('#lib').addEventListener('dragend', () => {
+    dragIds = null;
+    $$('.dragged').forEach((x) => x.classList.remove('dragged'));
+    document.body.classList.remove('moving-doc');
+    clearDropMarks();
+  });
+  const clearDropMarks = () => $$('.drop-on').forEach((x) => x.classList.remove('drop-on'));
+  const dropTarget = (e) => e.target.closest?.('.folder') || $('.lib-zone');
+  $('.lib-zone').addEventListener('dragover', (e) => {
+    const types = [...e.dataTransfer.types];
+    if (!types.includes(DOC_TYPE) && !types.includes('Files')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = types.includes(DOC_TYPE) ? 'move' : 'copy';
+    const t = dropTarget(e);
+    if (!t.classList.contains('drop-on')) { clearDropMarks(); t.classList.add('drop-on'); }
+    const f = t.classList.contains('folder') && folderById(t.dataset.fid);
+    if (f?.collapsed && !t._openTimer) t._openTimer = setTimeout(() => { if (t.classList.contains('drop-on')) toggleFolder(f.id); t._openTimer = null; }, 700);
+  });
+  $('.lib-zone').addEventListener('dragleave', (e) => {
+    if (!e.relatedTarget || !$('.lib-zone').contains(e.relatedTarget)) clearDropMarks();
+  });
+  $('.lib-zone').addEventListener('drop', (e) => {
+    const types = [...e.dataTransfer.types];
+    if (!types.includes(DOC_TYPE) && !types.includes('Files')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const t = dropTarget(e);
+    const fid = t.classList.contains('folder') ? t.dataset.fid : null;
+    clearDropMarks();
+    document.body.classList.remove('dragging', 'moving-doc');
+    resetDrag();
+    if (types.includes(DOC_TYPE)) moveDocs(dragIds || [e.dataTransfer.getData(DOC_TYPE)], fid);
+    else importDrop(e.dataTransfer, fid || undefined);
   });
   $('#toggleAll').addEventListener('click', toggleAll);
   $('#clearLib').addEventListener('click', async () => {
-    if (!S.docs.length) return;
-    if (!confirm(`Remove all ${plural(S.docs.length, 'document')} from this device?`)) return;
+    if (!S.docs.length && !S.folders.length) return;
+    if (!confirm(`Remove all ${plural(S.docs.length, 'document')}${S.folders.length ? ` and ${plural(S.folders.length, 'folder')}` : ''} from this device?`)) return;
     finalizeRemoval();
     S.docs.forEach((d) => closePdf(d.id));
     S.docs = [];
+    S.folders = [];
     S.texts.clear();
     await store.clear().catch(() => {});
     if (active === reader) closeReader();
@@ -1114,6 +1516,7 @@ function bind() {
 
   // keyboard
   addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && $('.pop-menu')) { closeMenu(); return; }
     const mod = e.metaKey || e.ctrlKey;
     const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable;
     if ((mod && (e.key === 'f' || e.key === 'k')) || (!typing && e.key === '/')) {
@@ -1135,6 +1538,7 @@ function bind() {
 
   // drag & drop anywhere
   let dragDepth = 0;
+  resetDrag = () => { dragDepth = 0; };
   const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
   addEventListener('dragenter', (e) => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; document.body.classList.add('dragging'); });
   addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
@@ -1144,7 +1548,7 @@ function bind() {
     e.preventDefault();
     dragDepth = 0;
     document.body.classList.remove('dragging');
-    addFiles(e.dataTransfer.files);
+    importDrop(e.dataTransfer);
   });
 
   // mobile drawer
@@ -1157,6 +1561,7 @@ function bind() {
   }).observe($('.topbar'));
 }
 const closeDrawer = () => document.body.classList.remove('drawer');
+let resetDrag = () => {};
 
 function setMode(mode) {
   if (!MODES[mode] || prefs.mode === mode) return;
@@ -1175,7 +1580,8 @@ async function start() {
   q.value = prefs.q || '';
   syncControls();
   try {
-    const [docs, texts] = await Promise.all([store.allDocs(), store.allTexts()]);
+    const [docs, texts, folders] = await Promise.all([store.allDocs(), store.allTexts(), store.allFolders()]);
+    S.folders = folders.sort((a, b) => (a.order || 0) - (b.order || 0));
     for (const t of texts) S.texts.set(t.id, t.pages);
     S.docs = docs.filter((d) => S.texts.has(d.id)).sort((a, b) => (a.order || 0) - (b.order || 0));
   } catch (e) {

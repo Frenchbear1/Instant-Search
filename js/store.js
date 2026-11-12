@@ -1,8 +1,8 @@
 // Tiny IndexedDB wrapper. Documents live on this device only.
-// stores: docs (metadata), texts (page text per doc), files (original PDF bytes for the page view)
+// stores: docs (metadata), texts (page text per doc), files (original PDF bytes for the page view), folders
 
 const DB_NAME = 'instant-search';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 let dbPromise;
 
 function open() {
@@ -14,6 +14,7 @@ function open() {
       if (!db.objectStoreNames.contains('docs')) db.createObjectStore('docs', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('texts')) db.createObjectStore('texts', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('files')) db.createObjectStore('files', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('folders')) db.createObjectStore('folders', { keyPath: 'id' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -37,6 +38,15 @@ function tx(stores, mode, fn) {
 export const store = {
   async allDocs() {
     return tx(['docs'], 'readonly', (t) => t.objectStore('docs').getAll());
+  },
+  async allFolders() {
+    return tx(['folders'], 'readonly', (t) => t.objectStore('folders').getAll());
+  },
+  async putFolders(folders) {
+    return tx(['folders'], 'readwrite', (t) => folders.forEach((f) => t.objectStore('folders').put(f)));
+  },
+  async deleteFolder(id) {
+    return tx(['folders'], 'readwrite', (t) => t.objectStore('folders').delete(id));
   },
   async allTexts() {
     return tx(['texts'], 'readonly', (t) => t.objectStore('texts').getAll());
@@ -66,10 +76,11 @@ export const store = {
     });
   },
   async clear() {
-    return tx(['docs', 'texts', 'files'], 'readwrite', (t) => {
+    return tx(['docs', 'texts', 'files', 'folders'], 'readwrite', (t) => {
       t.objectStore('docs').clear();
       t.objectStore('texts').clear();
       t.objectStore('files').clear();
+      t.objectStore('folders').clear();
     });
   },
 };
