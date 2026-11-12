@@ -107,11 +107,24 @@ const docById = (id) => S.docs.find((d) => d.id === id);
 const folderById = (id) => S.folders.find((f) => f.id === id);
 const folderOf = (d) => (d.folderId && folderById(d.folderId)) || null;
 // Library order: each folder's documents in folder order, then documents not in a folder.
+// The library's top level mixes folders and documents that aren't in a folder, in one order (`pos`).
+// Without a saved position, folders come first and loose documents after them.
+function topLevel() {
+  const items = [];
+  S.folders.forEach((f, i) => items.push({ kind: 'folder', id: f.id, f, pos: f.pos ?? i }));
+  S.docs.forEach((d, i) => {
+    if (!(d.folderId && folderById(d.folderId))) items.push({ kind: 'doc', id: d.id, d, pos: d.pos ?? 1e6 + i });
+  });
+  return items.sort((a, b) => a.pos - b.pos);
+}
+// Library order, top to bottom: each folder's documents where the folder sits.
 function orderedDocs() {
-  const by = new Map(S.folders.map((f) => [f.id, []]));
-  const loose = [];
-  for (const d of S.docs) (by.get(d.folderId) || loose).push(d);
-  return [...S.folders.flatMap((f) => by.get(f.id)), ...loose];
+  const out = [];
+  for (const it of topLevel()) {
+    if (it.kind === 'doc') out.push(it.d);
+    else for (const d of S.docs) if (d.folderId === it.id) out.push(d);
+  }
+  return out;
 }
 const pkey = (docId, n) => `${docId}:${n}`;
 // A group is one section: a whole document, or (when ranking pages) a single hit page and the pages opened around it.
@@ -946,9 +959,8 @@ function renderLibrary() {
   $('#toggleAll').hidden = ready.length < 2;
   $('#toggleAll').textContent = ready.every((d) => d.enabled) ? 'None' : 'All';
   const by = new Map(S.folders.map((f) => [f.id, []]));
-  const loose = [];
-  for (const d of S.docs) (by.get(d.folderId) || loose).push(d);
-  const folderHtml = S.folders.map((f) => {
+  for (const d of S.docs) by.get(d.folderId)?.push(d);
+  const folderHtml = (f) => {
     const docs = by.get(f.id);
     const rd = docs.filter(searchable);
     const on = rd.filter((d) => d.enabled).length;
@@ -963,9 +975,9 @@ function renderLibrary() {
       </div>
       <ul class="folder-docs">${docs.length ? docs.map((d) => docItemHtml(d, hits)).join('') : '<li class="folder-empty">Drag documents here, or use + to add files</li>'}</ul>
     </li>`;
-  }).join('');
+  };
   const next = document.createElement('ul');
-  next.innerHTML = folderHtml + loose.map((d) => docItemHtml(d, hits)).join('');
+  next.innerHTML = topLevel().map((it) => (it.kind === 'folder' ? folderHtml(it.f) : docItemHtml(it.d, hits))).join('');
   // folders are updated piece by piece (their row, then each document in them)
   const keyOf = (n) => n.dataset.id ? 'd' + n.dataset.id : n.dataset.fid ? 'f' + n.dataset.fid : 'x' + n.className;
   const morphFolder = (o, n) => {
@@ -1125,6 +1137,8 @@ function createFolder(name) {
   let n = base;
   for (let i = 2; S.folders.some((f) => f.name.toLowerCase() === n.toLowerCase()); i++) n = `${base} ${i}`;
   const f = { id: uid(), name: n, order: S.folders.reduce((m, x) => Math.max(m, x.order || 0), 0) + 1, collapsed: false };
+  const lastFolder = topLevel().filter((x) => x.kind === 'folder').pop();
+  if (lastFolder && S.folders.some((x) => x.pos != null)) f.pos = lastFolder.pos + 0.001;
   S.folders.push(f);
   saveFolders();
   renderLibrary();
@@ -1199,7 +1213,7 @@ function soloFolder(fid) {
 function moveDocs(ids, fid) {
   const docs = ids.map(docById).filter(Boolean).filter((d) => (d.folderId || null) !== (fid || null));
   if (!docs.length) return;
-  for (const d of docs) d.folderId = fid || null;
+  for (const d of docs) { d.folderId = fid || null; delete d.pos; } // out of a folder: lands at the bottom
   store.updateDocs(docs.filter(searchable).map(stripMeta)).catch(() => {});
   const f = fid && folderById(fid);
   if (f?.collapsed) { f.collapsed = false; saveFolders(); }
@@ -1215,40 +1229,66 @@ function afterReorder() {
   reorderTimer = setTimeout(() => runSearch({ keepScroll: true }), 350);
 }
 const liveFolder = (d) => (d.folderId && folderById(d.folderId) ? d.folderId : null);
-// Put a document directly above another one (joining that one's folder), or at the end of a folder/the loose list.
-function putDoc(id, { above = null, end = undefined } = {}) {
-  const d = docById(id);
-  if (!d || (above && above === id)) return;
-  const before = liveFolder(d);
-  S.docs.splice(S.docs.indexOf(d), 1);
-  let fid;
-  if (above) {
-    const ref = docById(above);
-    if (!ref) return;
-    S.docs.splice(S.docs.indexOf(ref), 0, d);
-    fid = liveFolder(ref);
-  } else {
-    fid = end || null;
-    const group = S.docs.filter((x) => liveFolder(x) === fid);
-    S.docs.splice(group.length ? S.docs.indexOf(group[group.length - 1]) + 1 : S.docs.length, 0, d);
-  }
-  d.folderId = fid;
+// Save a new top-level order (folders and loose documents together).
+function writeTopLevel(items) {
+  items.forEach((it, i) => { (it.kind === 'folder' ? it.f : it.d).pos = i; });
+  S.folders.sort((a, b) => a.pos - b.pos);
+  S.folders.forEach((f, i) => (f.order = i + 1));
+  saveFolders();
+}
+function saveDocOrder() {
   S.docs.forEach((x, i) => (x.order = i + 1));
   store.updateDocs(S.docs.filter(searchable).map(stripMeta)).catch(() => {});
-  const f = fid && folderById(fid);
-  if (f?.collapsed) { f.collapsed = false; saveFolders(); }
+}
+/**
+ * Move a document. where = { above: docId } | { aboveFolder: folderId } | { endOf: folderId } | { bottom: true }
+ * Above a loose document or a folder (or at the bottom) it sits loose in the library; above a document
+ * inside a folder, or at the end of a folder, it goes into that folder.
+ */
+function putDoc(id, where) {
+  const d = docById(id);
+  if (!d || where.above === id) return;
+  const before = liveFolder(d);
+  const ref = where.above && docById(where.above);
+  const refFolder = ref ? liveFolder(ref) : null;
+  if ((ref && !refFolder) || where.aboveFolder || where.bottom) {
+    // top level
+    d.folderId = null;
+    const items = topLevel().filter((it) => it.id !== id);
+    const me = { kind: 'doc', id, d };
+    const at = where.bottom ? items.length : items.findIndex((it) => it.id === (where.aboveFolder || where.above));
+    items.splice(at < 0 ? items.length : at, 0, me);
+    writeTopLevel(items);
+  } else {
+    // inside a folder
+    const fid = refFolder || where.endOf;
+    S.docs.splice(S.docs.indexOf(d), 1);
+    if (ref) S.docs.splice(S.docs.indexOf(ref), 0, d);
+    else {
+      const group = S.docs.filter((x) => liveFolder(x) === fid);
+      S.docs.splice(group.length ? S.docs.indexOf(group[group.length - 1]) + 1 : S.docs.length, 0, d);
+    }
+    d.folderId = fid;
+    delete d.pos;
+    const f = folderById(fid);
+    if (f?.collapsed) { f.collapsed = false; saveFolders(); }
+  }
+  saveDocOrder();
   afterReorder();
   flashRow(`#lib .lib-item[data-id="${id}"]`);
-  if (before !== fid) toast(`“${d.name}” moved ${f ? `into “${f.name}”` : 'out of its folder'}`, { ms: 2000 });
+  const now = liveFolder(d);
+  if (before !== now) toast(`“${d.name}” moved ${now ? `into “${folderById(now).name}”` : 'out of its folder'}`, { ms: 2000 });
 }
-function putFolder(id, above = null) {
-  const f = folderById(id);
-  if (!f || above === id) return;
-  S.folders.splice(S.folders.indexOf(f), 1);
-  const at = above ? S.folders.indexOf(folderById(above)) : S.folders.length;
-  S.folders.splice(at < 0 ? S.folders.length : at, 0, f);
-  S.folders.forEach((x, i) => (x.order = i + 1));
-  saveFolders();
+// Move a folder above any top-level item (a folder or a loose document), or to the bottom.
+function putFolder(id, aboveId = null) {
+  if (!folderById(id) || aboveId === id) return;
+  const items = topLevel();
+  const me = items.find((it) => it.id === id);
+  const rest = items.filter((it) => it !== me);
+  const at = aboveId ? rest.findIndex((it) => it.id === aboveId) : rest.length;
+  rest.splice(at < 0 ? rest.length : at, 0, me);
+  writeTopLevel(rest);
+  saveDocOrder();
   afterReorder();
   flashRow(`#lib .folder[data-fid="${id}"] > .folder-row`);
 }
@@ -1264,31 +1304,30 @@ function flashRow(sel) {
 }
 const docsIn = (fid) => S.docs.filter((x) => liveFolder(x) === fid);
 const self = (label) => ({ label: `${label} (this one)`, icon: I.text, disabled: true });
-// The list shown under "Rearrange" for a document: the library as it looks, folders open their files.
+// "Rearrange" for a document: the library as it looks. Tap anything to put the document right above it.
+// A folder's › (or hovering it) opens its files, to put the document inside it.
 function rearrangeDocItems(id) {
   const docRow = (x) => (x.id === id ? self(x.name) : { label: x.name, icon: I.text, run: () => putDoc(id, { above: x.id }) });
-  const items = [{ header: 'Put it above… (tap a folder for its top)' }];
-  for (const f of S.folders) {
-    const inside = docsIn(f.id);
+  const items = [{ header: 'Put it above…' }];
+  for (const it of topLevel()) {
+    if (it.kind === 'doc') { items.push(docRow(it.d)); continue; }
+    const f = it.f;
     items.push({
       label: f.name, icon: I.folder,
-      // tapping the folder puts the document at the top of it; › (or hovering) shows its files to pick a spot
-      run: () => (inside[0] && inside[0].id !== id ? putDoc(id, { above: inside[0].id }) : putDoc(id, { end: f.id })),
-      submenu: () => [{ header: `In “${f.name}”` }, ...docsIn(f.id).map(docRow), { sep: true }, { label: `At the end of “${f.name}”`, icon: I.down, run: () => putDoc(id, { end: f.id }) }],
+      run: () => putDoc(id, { aboveFolder: f.id }),
+      submenu: () => [{ header: `Inside “${f.name}”` }, ...docsIn(f.id).map(docRow), { sep: true }, { label: `At the end of “${f.name}”`, icon: I.down, run: () => putDoc(id, { endOf: f.id }) }],
     });
   }
-  const loose = docsIn(null);
-  if (S.folders.length && loose.length) items.push({ sep: true });
-  items.push(...loose.map(docRow));
-  items.push({ sep: true }, { label: 'At the end (no folder)', icon: I.down, run: () => putDoc(id, { end: null }) });
+  items.push({ sep: true }, { label: 'At the bottom of the library', icon: I.down, run: () => putDoc(id, { bottom: true }) });
   return items;
 }
 function rearrangeFolderItems(fid) {
   return [
     { header: 'Put it above…' },
-    ...S.folders.map((f) => (f.id === fid ? self(f.name) : { label: f.name, icon: I.folder, run: () => putFolder(fid, f.id) })),
+    ...topLevel().map((it) => (it.id === fid ? self(it.f.name)
+      : { label: it.kind === 'folder' ? it.f.name : it.d.name, icon: it.kind === 'folder' ? I.folder : I.text, run: () => putFolder(fid, it.id) })),
     { sep: true },
-    { label: 'At the bottom of the folders', icon: I.down, run: () => putFolder(fid, null) },
+    { label: 'At the bottom of the library', icon: I.down, run: () => putFolder(fid, null) },
   ];
 }
 
@@ -1462,7 +1501,7 @@ function folderMenu(anchor, fid) {
     ] : []),
     { label: 'Search only this folder', icon: I.target, run: () => soloFolder(fid) },
     { label: 'Rename', icon: I.pencil, run: () => startRename(fid) },
-    { label: 'Rearrange', icon: I.arrows, disabled: S.folders.length < 2, submenu: () => rearrangeFolderItems(fid) },
+    { label: 'Rearrange', icon: I.arrows, disabled: topLevel().length < 2, submenu: () => rearrangeFolderItems(fid) },
     { sep: true },
     { label: 'Delete folder (keeps documents)', icon: I.trash, danger: true, run: () => deleteFolder(fid) },
   ]);
