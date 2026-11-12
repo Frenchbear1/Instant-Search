@@ -926,13 +926,11 @@ function docItemHtml(d, hits) {
     ? `<span class="ptext">${progressText(d)}</span>`
     : `${d.source ? `<span class="linked" title="${esc(sourceTitle(d.source))}">${I.link}</span>` : ''}${plural(count, 'page')}${d.updatedAt && Date.now() - d.updatedAt < 14 * 864e5 ? ' · <span class="fresh-tag">updated</span>' : ''}${d.noText ? ' · <span class="warn">no text found</span>' : ''}`;
   const h = S.matcher && d.enabled && !d.status ? `<span class="lhits${hits.get(d.id) ? '' : ' zero'}">${fmt(hits.get(d.id) || 0)}</span>` : '';
-  return `<li class="lib-item${d.enabled ? ' on' : ''}${d.status ? ' busy' : ''}${reader.docId === d.id && active === reader ? ' reading' : ''}" data-id="${d.id}" draggable="${d.status ? 'false' : 'true'}">
+  return `<li class="lib-item${d.enabled ? ' on' : ''}${d.status ? ' busy' : ''}${reader.docId === d.id && active === reader ? ' reading' : ''}" data-id="${d.id}">
     <label class="chk" title="Include in search"><input type="checkbox" ${d.enabled ? 'checked' : ''} ${d.status ? 'disabled' : ''}><span></span></label>
-    <button class="lib-main" data-act="read" title="${esc(d.name)}"><span class="lname">${esc(d.name)}</span><span class="lmeta"><span class="ftype ${d.kind}">${KIND_LABEL[d.kind]}</span>${meta}</span></button>
+    <button class="lib-main" data-act="read" title="${esc(d.name)}" draggable="${d.status ? 'false' : 'true'}"><span class="lname">${esc(d.name)}</span><span class="lmeta"><span class="ftype ${d.kind}">${KIND_LABEL[d.kind]}</span>${meta}</span></button>
     ${h}
-    ${arrange?.kind === 'doc' && (arrange.group || null) === (d.folderId && folderById(d.folderId) ? d.folderId : null) && !d.status
-      ? arrowsHtml(`data-doc="${d.id}"`)
-      : `<span class="lib-acts"><button class="mini" data-act="solo" title="Search only this document">${I.target}</button><button class="mini" data-act="dmenu" title="More">${I.more}</button></span>`}
+    <span class="lib-acts"><button class="mini" data-act="solo" title="Search only this document">${I.target}</button><button class="mini" data-act="dmenu" title="More">${I.more}</button></span>
     ${d.status === 'indexing' ? `<div class="prog"><i style="width:${Math.round((d.progress || 0) * 100)}%"></i></div>` : ''}
   </li>`;
 }
@@ -961,7 +959,7 @@ function renderLibrary() {
         <label class="chk" title="Search this whole folder"><input type="checkbox" data-fchk ${rd.length && on === rd.length ? 'checked' : ''} ${on && on < rd.length ? 'data-indet' : ''} ${rd.length ? '' : 'disabled'}><span></span></label>
         <button class="folder-main" data-act="fold" title="${esc(f.name)}"><span class="chev">${I.chevron}</span><span class="ficon">${I.folder}</span><span class="fname">${esc(f.name)}</span>${f.source ? `<span class="linked" title="${esc(sourceTitle(f.source))}">${I.link}</span>` : ''}<span class="fcount">${fmt(docs.length)}</span></button>
         ${badge}
-        ${arrange?.kind === 'folder' ? arrowsHtml(`data-folder="${f.id}"`) : `<span class="lib-acts"><button class="mini" data-act="fsolo" title="Search only this folder">${I.target}</button><button class="mini" data-act="fadd" title="Add documents to this folder">${I.plus}</button><button class="mini" data-act="fmenu" title="More">${I.more}</button></span>`}
+        <span class="lib-acts"><button class="mini" data-act="fsolo" title="Search only this folder">${I.target}</button><button class="mini" data-act="fadd" title="Add documents to this folder">${I.plus}</button><button class="mini" data-act="fmenu" title="More">${I.more}</button></span>
       </div>
       <ul class="folder-docs">${docs.length ? docs.map((d) => docItemHtml(d, hits)).join('') : '<li class="folder-empty">Drag documents here, or use + to add files</li>'}</ul>
     </li>`;
@@ -992,9 +990,6 @@ function renderLibrary() {
     }
   }
   $('#libEmpty').hidden = !!(S.docs.length || S.folders.length);
-  const bar = $('#arrangeBar');
-  bar.hidden = !arrange;
-  if (arrange) setHTML(bar, `<span>${arrange.kind === 'folder' ? 'Arranging folders' : `Arranging ${arrange.group ? `“${esc(folderById(arrange.group)?.name || '')}”` : 'documents not in a folder'}`}</span><button class="btn primary sm" data-done>Done</button>`);
   $('#checkAllBtn').hidden = !hasSources();
 }
 
@@ -1212,47 +1207,50 @@ function moveDocs(ids, fid) {
   toast(`${docs.length === 1 ? `“${docs[0].name}”` : plural(docs.length, 'document')} moved ${f ? `to “${f.name}”` : 'out of the folder'}`, { ms: 2200 });
 }
 
-// ---------- moving documents and folders up and down ----------
-// Documents move only among their neighbours: the same folder, or the documents not in a folder.
-function docGroup(d) {
-  const fid = d.folderId && folderById(d.folderId) ? d.folderId : null;
-  return S.docs.filter((x) => (x.folderId && folderById(x.folderId) ? x.folderId : null) === fid);
-}
+// ---------- rearranging: tap a document or folder to put the item right above it ----------
 let reorderTimer;
 function afterReorder() {
   renderLibrary();
   clearTimeout(reorderTimer);
-  reorderTimer = setTimeout(() => runSearch({ keepScroll: true }), 350); // results follow, without lag while clicking arrows
+  reorderTimer = setTimeout(() => runSearch({ keepScroll: true }), 350);
 }
-function moveDoc(id, to) {
+const liveFolder = (d) => (d.folderId && folderById(d.folderId) ? d.folderId : null);
+// Put a document directly above another one (joining that one's folder), or at the end of a folder/the loose list.
+function putDoc(id, { above = null, end = undefined } = {}) {
   const d = docById(id);
-  if (!d) return;
-  const group = docGroup(d);
-  const from = group.indexOf(d);
-  const target = Math.max(0, Math.min(group.length - 1, to === 'top' ? 0 : to === 'bottom' ? group.length - 1 : from + to));
-  if (target === from) return;
-  const rest = group.filter((x) => x !== d);
-  rest.splice(target, 0, d);
-  // write the group back into the same slots it occupied in the full list
-  const slots = S.docs.map((x, i) => (group.includes(x) ? i : -1)).filter((i) => i >= 0);
-  slots.forEach((slot, k) => (S.docs[slot] = rest[k]));
+  if (!d || (above && above === id)) return;
+  const before = liveFolder(d);
+  S.docs.splice(S.docs.indexOf(d), 1);
+  let fid;
+  if (above) {
+    const ref = docById(above);
+    if (!ref) return;
+    S.docs.splice(S.docs.indexOf(ref), 0, d);
+    fid = liveFolder(ref);
+  } else {
+    fid = end || null;
+    const group = S.docs.filter((x) => liveFolder(x) === fid);
+    S.docs.splice(group.length ? S.docs.indexOf(group[group.length - 1]) + 1 : S.docs.length, 0, d);
+  }
+  d.folderId = fid;
   S.docs.forEach((x, i) => (x.order = i + 1));
   store.updateDocs(S.docs.filter(searchable).map(stripMeta)).catch(() => {});
-  flashRow(`#lib .lib-item[data-id="${id}"]`);
+  const f = fid && folderById(fid);
+  if (f?.collapsed) { f.collapsed = false; saveFolders(); }
   afterReorder();
+  flashRow(`#lib .lib-item[data-id="${id}"]`);
+  if (before !== fid) toast(`“${d.name}” moved ${f ? `into “${f.name}”` : 'out of its folder'}`, { ms: 2000 });
 }
-function moveFolder(fid, to) {
-  const f = folderById(fid);
-  if (!f) return;
-  const from = S.folders.indexOf(f);
-  const target = Math.max(0, Math.min(S.folders.length - 1, to === 'top' ? 0 : to === 'bottom' ? S.folders.length - 1 : from + to));
-  if (target === from) return;
-  S.folders.splice(from, 1);
-  S.folders.splice(target, 0, f);
+function putFolder(id, above = null) {
+  const f = folderById(id);
+  if (!f || above === id) return;
+  S.folders.splice(S.folders.indexOf(f), 1);
+  const at = above ? S.folders.indexOf(folderById(above)) : S.folders.length;
+  S.folders.splice(at < 0 ? S.folders.length : at, 0, f);
   S.folders.forEach((x, i) => (x.order = i + 1));
   saveFolders();
-  flashRow(`#lib .folder[data-fid="${fid}"] > .folder-row`);
   afterReorder();
+  flashRow(`#lib .folder[data-fid="${id}"] > .folder-row`);
 }
 function flashRow(sel) {
   requestAnimationFrame(() => {
@@ -1264,30 +1262,32 @@ function flashRow(sel) {
     r.scrollIntoView({ block: 'nearest' });
   });
 }
-function moveMenuItems(kind, id) {
-  const go = (to) => () => (kind === 'doc' ? moveDoc(id, to) : moveFolder(id, to));
+const docsIn = (fid) => S.docs.filter((x) => liveFolder(x) === fid);
+const self = (label) => ({ label: `${label} (this one)`, icon: I.text, disabled: true });
+// The list shown under "Rearrange" for a document: the library as it looks, folders open their files.
+function rearrangeDocItems(id) {
+  const docRow = (x) => (x.id === id ? self(x.name) : { label: x.name, icon: I.text, run: () => putDoc(id, { above: x.id }) });
+  const items = [{ header: 'Put it above…' }];
+  for (const f of S.folders) {
+    items.push({
+      label: f.name, icon: I.folder,
+      submenu: () => [{ header: `In “${f.name}”` }, ...docsIn(f.id).map(docRow), { sep: true }, { label: `At the end of “${f.name}”`, icon: I.down, run: () => putDoc(id, { end: f.id }) }],
+    });
+  }
+  const loose = docsIn(null);
+  if (S.folders.length && loose.length) items.push({ sep: true });
+  items.push(...loose.map(docRow));
+  items.push({ sep: true }, { label: 'At the end (no folder)', icon: I.down, run: () => putDoc(id, { end: null }) });
+  return items;
+}
+function rearrangeFolderItems(fid) {
   return [
-    { header: kind === 'doc' ? 'Move within its list' : 'Move folder' },
-    { label: 'To the top', icon: I.up, run: go('top') },
-    { label: 'Up 10', icon: I.up, run: go(-10) },
-    { label: 'Up 5', icon: I.up, run: go(-5) },
-    { label: 'Down 5', icon: I.down, run: go(5) },
-    { label: 'Down 10', icon: I.down, run: go(10) },
-    { label: 'To the bottom', icon: I.down, run: go('bottom') },
+    { header: 'Put it above…' },
+    ...S.folders.map((f) => (f.id === fid ? self(f.name) : { label: f.name, icon: I.folder, run: () => putFolder(fid, f.id) })),
     { sep: true },
-    { label: 'Arrange with arrows…', icon: I.arrows, run: () => startArrange(kind, id) },
+    { label: 'At the bottom of the folders', icon: I.down, run: () => putFolder(fid, null) },
   ];
 }
-// "Arrange with arrows": up/down buttons appear on every row of that list until you press Done.
-let arrange = null; // { kind: 'doc'|'folder', group: folderId|null }
-function startArrange(kind, id) {
-  arrange = kind === 'folder' ? { kind } : { kind, group: (() => { const d = docById(id); return d?.folderId && folderById(d.folderId) ? d.folderId : null; })() };
-  if (arrange.group) { const f = folderById(arrange.group); if (f.collapsed) { f.collapsed = false; saveFolders(); } }
-  renderLibrary();
-  toast('Use the arrows to move things up and down. Press Done when finished.', { ms: 3000 });
-}
-function endArrange() { arrange = null; renderLibrary(); }
-const arrowsHtml = (attr) => `<span class="arrange-btns"><button class="mini" data-arr="up" ${attr} title="Move up">${I.up}</button><button class="mini" data-arr="down" ${attr} title="Move down">${I.down}</button></span>`;
 
 let pendingFolderDelete = null;
 function deleteFolder(fid) {
@@ -1370,6 +1370,7 @@ function placeMenu(m) {
   m.style.top = top + 'px';
 }
 function closeSubmenu(parent) {
+  if (parent._sub) closeSubmenu(parent._sub); // and anything opened from it
   parent._sub?.remove();
   parent._sub = null;
   parent._subFor = null;
@@ -1438,7 +1439,7 @@ function docMenu(anchor, id) {
       }] : []),
     ] : []),
     { sep: true },
-    { label: 'Move up or down…', icon: I.arrows, disabled: !!d.status, run: () => setTimeout(() => openMenu(anchor, moveMenuItems('doc', id)), 0) },
+    { label: 'Rearrange', icon: I.arrows, disabled: !!d.status, submenu: () => rearrangeDocItems(id) },
     { label: 'Move to folder', icon: I.folder, submenu: () => moveItems(d).slice(1) },
     { sep: true },
     { label: 'Remove from library', icon: I.trash, danger: true, run: () => removeDoc(id) },
@@ -1456,7 +1457,7 @@ function folderMenu(anchor, fid) {
     ] : []),
     { label: 'Search only this folder', icon: I.target, run: () => soloFolder(fid) },
     { label: 'Rename', icon: I.pencil, run: () => startRename(fid) },
-    { label: 'Move up or down…', icon: I.arrows, run: () => setTimeout(() => openMenu(anchor, moveMenuItems('folder', fid)), 0) },
+    { label: 'Rearrange', icon: I.arrows, disabled: S.folders.length < 2, submenu: () => rearrangeFolderItems(fid) },
     { sep: true },
     { label: 'Delete folder (keeps documents)', icon: I.trash, danger: true, run: () => deleteFolder(fid) },
   ]);
@@ -2382,13 +2383,6 @@ function bind() {
     if (li) setEnabled(li.dataset.id, e.target.checked);
   });
   $('#lib').addEventListener('click', (e) => {
-    const arr = e.target.closest('button[data-arr]');
-    if (arr) {
-      e.stopPropagation();
-      const step = (arr.dataset.arr === 'up' ? -1 : 1) * (e.shiftKey ? 5 : 1);
-      if (arr.dataset.doc) moveDoc(arr.dataset.doc, step); else moveFolder(arr.dataset.folder, step);
-      return;
-    }
     const b = e.target.closest('button[data-act]');
     if (!b) return;
     e.stopPropagation();
@@ -2417,7 +2411,7 @@ function bind() {
   const zone = $('.lib-zone');
   let dragId = null;
   // a drag may start from the document's name or the row itself, never from its buttons or checkbox
-  const NO_DRAG = '.lib-acts, .arrange-btns, .chk, .mini, input';
+  const NO_DRAG = '.lib-acts, .chk, .mini, input';
   let pressedOn = null;
   $('#lib').addEventListener('pointerdown', (e) => { pressedOn = e.target; }, true);
   $('#lib').addEventListener('dragstart', (e) => {
@@ -2474,7 +2468,6 @@ function bind() {
   });
   $('#toggleAll').addEventListener('click', toggleAll);
   $('#clearLib').addEventListener('click', openClear);
-  $('#arrangeBar').addEventListener('click', (e) => { if (e.target.closest('[data-done]')) endArrange(); });
 
   // results + reader (delegated)
   const onMain = (e) => {

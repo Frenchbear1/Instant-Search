@@ -155,7 +155,7 @@ body.moving-doc .lib-out { display: flex; }
   padding: 4px 6px 4px 4px; border-radius: 11px; transition: background 0.15s;
 }
 .lib-item:hover { background: rgba(127, 120, 110, 0.09); }
-.lib-item[draggable="true"] { cursor: grab; }
+.lib-main[draggable="true"] { cursor: grab; }
 .lib-item.dragged { opacity: 0.4; }
 body.moving-doc .lib-item:hover { background: transparent; }
 
@@ -768,13 +768,7 @@ dialog[open] { animation: dlg 0.2s ease-out; }
 .ol-sort select { height: 32px; padding: 0 26px 0 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); font-size: 12.5px; font-weight: 550; letter-spacing: 0; text-transform: none; color: var(--ink-2); appearance: none; cursor: pointer;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 10l5 5 5-5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 7px center; background-size: 14px; }
 @media (min-width: 1241px) { .results-head .sort { display: none; } }
-/* arrange with arrows */
-.arrange-bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin: -4px 0 -6px; border-radius: 11px; background: var(--accent-soft); font-size: 12.5px; font-weight: 600; color: var(--accent); }
-.arrange-bar span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .btn.sm { height: 28px; padding: 0 12px; border-radius: 8px; font-size: 12.5px; }
-.arrange-btns { grid-column: 3; grid-row: 1; justify-self: end; display: flex; gap: 2px; }
-.arrange-btns .mini { width: 28px; height: 28px; background: var(--card); box-shadow: var(--shadow-sm); color: var(--ink-2); }
-.arrange-btns .mini:hover { color: var(--accent); }
 .lib-item.moved, .folder-row.moved { animation: moved 0.6s ease-out; }
 @keyframes moved { from { background: var(--accent-soft); } }
 .btn.danger { background: var(--danger); color: #fff; }
@@ -783,7 +777,7 @@ dialog[open] { animation: dlg 0.2s ease-out; }
 #outlineList { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
 .ol-sort { flex: none; }
 
-.lib-item[draggable="true"] :is(.lib-acts, .arrange-btns, .chk, .mini, input) { cursor: pointer; }
+.lib-item :is(.lib-acts, .chk, .mini, input) { cursor: pointer; }
 
 .menu-item .sub-arrow { display: grid; place-items: center; margin-left: auto; color: var(--muted); }
 .menu-item .sub-arrow svg { width: 13px; height: 13px; }
