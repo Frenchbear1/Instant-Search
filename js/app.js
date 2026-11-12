@@ -1738,7 +1738,7 @@ function compareVersions(doc, pages, size) {
 }
 
 // ---------- review dialog ----------
-function review({ title, intro = '', rows, options = [], apply = 'Apply', cancel = 'Cancel', danger = false }) {
+function review({ title, intro = '', rows, options = [], apply = 'Apply', cancel = 'Cancel', danger = false, alwaysApply = false }) {
   return new Promise((resolve) => {
     const dlg = $('#reviewDlg');
     $('#reviewTitle').textContent = title;
@@ -1759,7 +1759,7 @@ function review({ title, intro = '', rows, options = [], apply = 'Apply', cancel
     $('#reviewOpts').innerHTML = options.map((o) => o.choices
       ? `<div class="choice" role="radiogroup" aria-label="${esc(o.label || '')}">${o.label ? `<div class="choice-title">${esc(o.label)}</div>` : ''}${o.choices.map((c) => `<label class="choice-card"><input type="radio" name="opt-${o.id}" data-c="${o.id}" value="${c.value}" ${c.value === o.value ? 'checked' : ''}><span><b>${esc(c.label)}</b><em>${esc(c.hint || '')}</em></span></label>`).join('')}</div>`
       : `<label class="check-row"><input type="checkbox" data-o="${o.id}" ${o.checked ? 'checked' : ''}> ${esc(o.label)}</label>`).join('');
-    const actionable = danger || rows.some((r) => !r.header && !r.info);
+    const actionable = danger || alwaysApply || rows.some((r) => !r.header && !r.info);
     $('#reviewApply').classList.toggle('danger', danger);
     $('#reviewApply').hidden = !actionable;
     $('#reviewApply').textContent = apply;
@@ -2156,6 +2156,15 @@ function parseAiAnswer(text) {
   return out;
 }
 
+let helperCode = null;
+function helperFixHtml(hosts, picks) {
+  const list = hosts.map((h) => `<b>${esc(h)}</b>`).join(', ');
+  return `<span class="helper-fix"><b>Your download helper doesn’t allow ${list} yet</b>, so ${picks ? 'some of these' : 'these'} couldn’t be downloaded. To fix it (one time):
+    <ol><li><button type="button" class="btn sm" data-copyhelper>Copy the updated helper code</button></li>
+    <li>Open <a href="https://dash.cloudflare.com" target="_blank" rel="noopener">Cloudflare</a> → <b>Workers &amp; Pages</b> → your helper → <b>Edit code</b>. Select everything in the editor, paste, and click <b>Deploy</b>.</li>
+    <li>Come back and press <b>Try again</b>${picks ? ' in Find documents with AI' : ''}.</li></ol>
+    <em>If you added other sites to the helper yourself, add them to the list at the top again.</em></span>`;
+}
 async function linkWithAi() {
   const items = parseAiAnswer($('#aiAnswer').value);
   if (!items.length) {
@@ -2165,7 +2174,14 @@ async function linkWithAi() {
   const norm = (s) => String(s).toLowerCase().replace(/\.[a-z0-9]{2,5}$/, '').replace(/[^a-z0-9]+/g, '');
   const pool = S.docs.filter((d) => !d.status);
   const rows = [];
-  const groups = { ok: [], warn: [], bad: [], unsure: [], already: [], missing: [], fresh: [], freshBad: [] };
+  const groups = { ok: [], warn: [], bad: [], unsure: [], already: [], missing: [], fresh: [], freshBad: [], blocked: [] };
+  // the download helper refuses sites that aren't in its list: collect them for one clear fix
+  const blocked = new Set();
+  const blockedBy = (err) => {
+    const m = String(err?.message || '').match(/set up to fetch from ([a-z0-9.-]+)/i);
+    if (m) blocked.add(m[1].replace(/\.+$/, '').replace(/^www\./, ''));
+    return !!m;
+  };
   const jobs = [];
   const newJobs = [];
   const used = new Set();
@@ -2254,6 +2270,7 @@ async function linkWithAi() {
       if (info.status >= 400) throw new Error(`the site answered ${info.status}`);
       if (d.kind !== 'html' && info.type === 'text/html') throw new Error('the link opens a web page, not the document');
     } catch (err) {
+      if (blockedBy(err)) { groups.blocked.push(d.name); return; }
       groups.bad.push({ info: true, tone: 'warn', title: d.name, detail: `Not linked — ${esc(helperProblem(err))}` });
       return;
     }
@@ -2308,7 +2325,10 @@ async function linkWithAi() {
       info = await remoteInfo(url);
       if (info.status >= 400) throw new Error(`the site answered ${info.status}`);
       if (info.type === 'text/html' || !looksLikeDocument(info.finalUrl || url, info.type)) throw new Error('the link opens a web page, not a downloadable document');
-    } catch (err) { return bad(esc(helperProblem(err))); }
+    } catch (err) {
+      if (blockedBy(err)) { groups.blocked.push(it.name); return; }
+      return bad(esc(helperProblem(err)));
+    }
     let host = '';
     try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {}
     const watchPage = link && pageInfo ? page : '';
@@ -2351,6 +2371,17 @@ async function linkWithAi() {
   const dest = $('#aiDest').value;
   const destName = dest === 'new' ? ($('#aiDestName').value.trim() || 'New folder') : dest ? folderById(dest)?.name : '';
   const sec = (header, list) => { if (list.length) rows.push({ header }, ...list); };
+  if (groups.blocked.length) {
+    const names = groups.blocked.slice(0, 5).map(esc).join(', ') + (groups.blocked.length > 5 ? `, and ${fmt(groups.blocked.length - 5)} more` : '');
+    rows.push({ header: 'Waiting on your download helper' }, { info: true, tone: 'warn', title: `${plural(groups.blocked.length, 'document')} from ${[...blocked].join(', ')}`, detail: names });
+    helperCode = null;
+    fetch('helper/cloudflare-worker.js', { cache: 'no-cache' }).then((r) => (r.ok ? r.text() : null)).then((code) => {
+      if (code) helperCode = code.replace(/const ALLOWED_SITES = \[([\s\S]*?)\];/, (all, body) => {
+        const missing = [...blocked].filter((h) => !new RegExp(`'${h.replace(/\./g, '\\.')}'`).test(body));
+        return missing.length ? `const ALLOWED_SITES = [${body.replace(/\s*$/, '')}\n${missing.map((h) => `  '${h}',`).join('\n')}\n];` : all;
+      });
+    }).catch(() => {});
+  }
   sec(destName ? `New documents → “${destName}”` : 'New documents', groups.fresh);
   sec('Couldn’t add these', groups.freshBad);
   sec('Ready to link', groups.ok);
@@ -2362,12 +2393,14 @@ async function linkWithAi() {
   const picks = groups.ok.length + groups.warn.length + groups.fresh.length;
   const linking = groups.ok.length + groups.warn.length;
   const res = await review({
-    title: !picks ? 'No links to use' : groups.fresh.length && !linking ? 'Add these documents' : linking && !groups.fresh.length ? 'Link these files' : 'Add and link',
-    intro: picks ? `Every link below was opened and checked. ${groups.fresh.length ? 'Ticked new documents are downloaded and kept up to date. ' : ''}${linking ? 'Ticked files of yours get linked; your copies stay as they are until you press ↻ to check for updates.' : ''}` : 'None of the links could be used. The details are below.',
+    title: !picks ? (groups.blocked.length ? 'Your download helper needs one update' : 'No links to use') : groups.fresh.length && !linking ? 'Add these documents' : linking && !groups.fresh.length ? 'Link these files' : 'Add and link',
+    intro: (groups.blocked.length ? helperFixHtml([...blocked], picks) : '') + (picks ? `Every link below was opened and checked. ${groups.fresh.length ? 'Ticked new documents are downloaded and kept up to date. ' : ''}${linking ? 'Ticked files of yours get linked; your copies stay as they are until you press ↻ to check for updates.' : ''}` : groups.blocked.length ? '' : 'None of the links could be used. The details are below.'),
     rows,
     options: picks && groups.ok.concat(groups.warn, groups.fresh).some((r) => r.page) ? [{ id: 'watch', label: 'Also watch their pages, to catch editions published under a new file name and new documents', checked: true }] : [],
-    apply: !picks ? 'OK' : groups.fresh.length && !linking ? 'Add' : linking && !groups.fresh.length ? 'Link' : 'Add and link',
+    alwaysApply: !picks && groups.blocked.length > 0,
+    apply: !picks ? (groups.blocked.length ? 'Try again' : 'OK') : groups.fresh.length && !linking ? 'Add' : linking && !groups.fresh.length ? 'Link' : 'Add and link',
   });
+  if (res && !picks && groups.blocked.length) { setTimeout(() => linkWithAi(), 50); return; }
   if (!res || !picks) return;
   const freshPicked = rows.filter((r) => r.kind === 'ainew' && res.picked.has(r));
   let destId = null;
@@ -2400,6 +2433,7 @@ async function linkWithAi() {
   }
   await store.updateDocs(picked.map((r) => stripMeta(r.doc))).catch(() => {});
   renderLibrary();
+  if (groups.blocked.length) toast(`${plural(groups.blocked.length, 'document')} still waiting on your download helper. After updating it, open Find documents with AI and press Check & add again — your answer is still there.`, { ms: 9000 });
   toast([freshPicked.length && `Adding ${plural(freshPicked.length, 'document')}`, picked.length && `linked ${plural(picked.length, 'file')}`].filter(Boolean).join(' · ').replace(/^l/, 'L') + '. Press ↻ next to Library any time to check for updates.', { ms: 6000 });
 }
 
@@ -2720,6 +2754,12 @@ function bind() {
   $('#checkAllBtn').addEventListener('click', () => checkSources());
   $('#linkForm').addEventListener('submit', (e) => { e.preventDefault(); submitLink(); });
   $('#linkDlg').addEventListener('click', (e) => { if (e.target === e.currentTarget || e.target.closest('[data-close]')) $('#linkDlg').close(); });
+  $('#reviewIntro').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-copyhelper]');
+    if (!b) return;
+    if (helperCode && copyText(helperCode)) { b.textContent = 'Copied ✓ — now paste it in Cloudflare'; b.classList.add('done'); }
+    else { b.textContent = 'Couldn’t copy — open the code on GitHub instead'; window.open('https://github.com/Frenchbear1/Instant-Search/blob/main/helper/cloudflare-worker.js', '_blank', 'noopener'); }
+  });
   $('#aiMode').addEventListener('click', (e) => { const b = e.target.closest('[data-m]'); if (b) { setAiMode(b.dataset.m); setAiStatus(''); } });
   $('#aiDest').addEventListener('change', (e) => { e.target.dataset.picked = '1'; $('#aiDestNameRow').hidden = e.target.value !== 'new'; });
   $('#aiGo').addEventListener('click', () => aiCopy(true));
