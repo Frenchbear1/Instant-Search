@@ -2359,9 +2359,14 @@ function bind() {
   const DOC_TYPE = 'application/x-instant-doc';
   const zone = $('.lib-zone');
   let dragId = null;
+  // a drag may start from the document's name or the row itself, never from its buttons or checkbox
+  const NO_DRAG = '.lib-acts, .arrange-btns, .chk, .mini, input';
+  let pressedOn = null;
+  $('#lib').addEventListener('pointerdown', (e) => { pressedOn = e.target; }, true);
   $('#lib').addEventListener('dragstart', (e) => {
     const li = e.target.closest?.('.lib-item');
     if (!li) return;
+    if (pressedOn?.closest?.(NO_DRAG)) { e.preventDefault(); return; }
     dragId = li.dataset.id;
     e.dataTransfer.setData(DOC_TYPE, li.dataset.id);
     e.dataTransfer.setData('text/plain', docById(li.dataset.id)?.name || '');
