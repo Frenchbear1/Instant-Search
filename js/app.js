@@ -1402,6 +1402,7 @@ function bind() {
   let resizeTimer;
   addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (typeof prefs.zoom === 'string') applyZoom(); }, 150); });
   $('#compactBtn').addEventListener('click', toggleCompact);
+  bindSideResize();
   // phone reading bar
   bindModeScrub($('#mMode'), { startIndex: () => Object.keys(MODES).indexOf(prefs.mode), onTap: () => modeMenu($('#mMode')) });
   bindHoldMenu($('#mMore'), moreItems);
@@ -1886,6 +1887,65 @@ function toggleCompact() {
   updateChrome();
   requestAnimationFrame(() => { restoreAnchor(a); if (prefs.zoom === 'page') applyZoom(); });
 }
+// ---------- resizable library ----------
+const SIDE_MIN = 200;
+const SIDE_DEFAULT = 288;
+const sideMax = () => Math.max(SIDE_MIN, Math.min(640, Math.round(innerWidth * 0.5)));
+function applySideWidth(w) {
+  if (w == null) document.documentElement.style.removeProperty('--side-w-user');
+  else document.documentElement.style.setProperty('--side-w-user', Math.round(w) + 'px');
+}
+function bindSideResize() {
+  const handle = $('#sideResize');
+  let drag = null;
+  let raf = 0;
+  const finish = () => {
+    if (prefs.zoom === 'width') applyZoom();
+    savePrefs();
+  };
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    drag = { left: $('.sidebar').getBoundingClientRect().left, w: prefs.sideW || SIDE_DEFAULT };
+    handle.setPointerCapture(e.pointerId);
+    document.body.classList.add('side-resizing');
+  });
+  handle.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const raw = e.clientX - drag.left;
+    // drag far enough left and letting go hides the library
+    document.body.classList.toggle('side-collapsing', raw < 140);
+    const w = Math.max(SIDE_MIN, Math.min(sideMax(), raw));
+    drag.cur = raw;
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => { prefs.sideW = w; applySideWidth(w); });
+  });
+  const end = () => {
+    if (!drag) return;
+    const d = drag;
+    drag = null;
+    document.body.classList.remove('side-resizing', 'side-collapsing');
+    if (d.cur != null && d.cur < 140) {
+      prefs.sideW = d.w;
+      applySideWidth(d.w);
+      toggleLibrary();
+      toast(`Library hidden — press ${keyHint('toggleLibrary')} or ☰ to bring it back`, { ms: 2600 });
+    }
+    finish();
+  };
+  handle.addEventListener('pointerup', end);
+  handle.addEventListener('pointercancel', end);
+  handle.addEventListener('dblclick', () => { delete prefs.sideW; applySideWidth(null); finish(); });
+  handle.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const w = Math.max(SIDE_MIN, Math.min(sideMax(), (prefs.sideW || SIDE_DEFAULT) + (e.key === 'ArrowRight' ? 24 : -24)));
+    prefs.sideW = w;
+    applySideWidth(w);
+    finish();
+  });
+}
+
 function toggleLibrary() {
   if (innerWidth <= 900) { document.body.classList.toggle('drawer'); return; }
   prefs.sideHidden = !prefs.sideHidden;
@@ -2126,6 +2186,7 @@ async function start() {
   bind();
   q.value = prefs.q || '';
   document.documentElement.style.setProperty('--z', '1');
+  if (prefs.sideW) applySideWidth(Math.min(prefs.sideW, sideMax()));
   syncControls();
   try {
     const [docs, texts, folders] = await Promise.all([store.allDocs(), store.allTexts(), store.allFolders()]);

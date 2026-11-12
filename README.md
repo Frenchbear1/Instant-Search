@@ -15,6 +15,7 @@ Open `index.html` from any static host (it's a plain static site, no build step)
 - **Read whole** opens one document in full, still highlighted, with a page jump box.
 - **Folders**: tick a folder to search everything in it (or untick it to leave it out); the target button searches only that folder. Drag documents between folders, drop files from your computer straight onto a folder, add a whole folder from your computer (it becomes a library folder), or use the ▾ next to Add documents to import a batch into an existing or new folder. Deleting a folder keeps its documents.
 - Library checkboxes choose which documents are searched; the target button searches only one.
+- **Resize the library**: drag its right edge to make it wider or narrower (double-click the edge to reset). Drag it most of the way closed to hide it.
 - **Sort** results by library order, documents with most hits, or pages with most hits (every hit page across all documents, ranked).
 - **Keyboard shortcuts you can change** (keyboard button or `?`): next/previous hit (N), next/previous page with hits (] [ or J K), next/previous document (Shift+] Shift+[), first/last hit, pan, zoom, fit, switch search type and more. Click + to add a key, click a key to remove it.
 - **Minimize the toolbar** (chevron button or H) so only the search box is left. The search type becomes a pill inside the box: tap it for options, or press and drag sideways to slide between types. The full toolbar's type buttons can be dragged across the same way. The library can be hidden too (L).
