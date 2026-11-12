@@ -1863,6 +1863,9 @@ function openLinkDialog(folderId, { url = '', helperOpen = false, aiOpen = false
   $('#helperState').className = helper.get() ? 'ok' : '';
   $('#helperBox').open = helperOpen || false;
   $('#aiBox').open = aiOpen || false;
+  loadHelperCode();
+  $('#helperCopy').textContent = 'Copy helper code';
+  $('#helperCopy').classList.remove('done');
   fillAiBox();
   setLinkStatus('');
   $('#linkGo').disabled = false;
@@ -2156,14 +2159,53 @@ function parseAiAnswer(text) {
   return out;
 }
 
+// ---- the download helper's secret key: lets it fetch from any site while only you can use it ----
+const KEY_STORE = 'instant-search:helperKey';
+const keyOf = (u) => { try { return new URL(u).searchParams.get('key') || ''; } catch { return ''; } };
+const withKey = (u, k) => { try { const x = new URL(u); x.searchParams.set('key', k); return x.toString(); } catch { return u; } };
+function ensureHelperKey() {
+  let k = keyOf(helper.get());
+  if (!k) { try { k = localStorage.getItem(KEY_STORE) || ''; } catch {} }
+  if (!k) {
+    const a = new Uint8Array(20);
+    crypto.getRandomValues(a);
+    k = [...a].map((b) => (b % 36).toString(36)).join('');
+  }
+  try { localStorage.setItem(KEY_STORE, k); } catch {}
+  return k;
+}
 let helperCode = null;
+function loadHelperCode() {
+  const key = ensureHelperKey();
+  return fetch('helper/cloudflare-worker.js', { cache: 'no-cache' })
+    .then((r) => (r.ok ? r.text() : null))
+    .then((code) => (helperCode = code
+      ? code.replace(/const ALLOWED_SITES = \[[\s\S]*?\];/, "const ALLOWED_SITES = ['*'];").replace(/const ACCESS_KEY = '[^']*';/, `const ACCESS_KEY = '${key}';`)
+      : null))
+    .catch(() => null);
+}
+function copyHelperCode(btn) {
+  const finish = (ok) => {
+    if (ok) {
+      // the address the app uses carries the key (an older helper simply ignores it)
+      const key = ensureHelperKey();
+      if (helper.get()) { helper.set(withKey(helper.get(), key)); $('#helperUrl').value = helper.get(); }
+      btn.textContent = 'Copied ✓ — now paste it in Cloudflare';
+      btn.classList.add('done');
+    } else {
+      btn.textContent = 'Couldn’t copy — try again';
+    }
+  };
+  if (helperCode) finish(copyText(helperCode));
+  else loadHelperCode().then((code) => finish(!!code && copyText(code)));
+}
 function helperFixHtml(hosts, picks) {
   const list = hosts.map((h) => `<b>${esc(h)}</b>`).join(', ');
-  return `<span class="helper-fix"><b>Your download helper doesn’t allow ${list} yet</b>, so ${picks ? 'some of these' : 'these'} couldn’t be downloaded. To fix it (one time):
+  return `<span class="helper-fix"><b>Your download helper doesn’t allow ${list} yet</b>, so ${picks ? 'some of these' : 'these'} couldn’t be downloaded. Update it once and it can download from any site, protected by your own secret key:
     <ol><li><button type="button" class="btn sm" data-copyhelper>Copy the updated helper code</button></li>
     <li>Open <a href="https://dash.cloudflare.com" target="_blank" rel="noopener">Cloudflare</a> → <b>Workers &amp; Pages</b> → your helper → <b>Edit code</b>. Select everything in the editor, paste, and click <b>Deploy</b>.</li>
     <li>Come back and press <b>Try again</b>${picks ? ' in Find documents with AI' : ''}.</li></ol>
-    <em>If you added other sites to the helper yourself, add them to the list at the top again.</em></span>`;
+    <em>Your key is saved in the helper address. To use the helper on another device, copy the whole address from <b>Download helper</b> in the web link window.</em></span>`;
 }
 async function linkWithAi() {
   const items = parseAiAnswer($('#aiAnswer').value);
@@ -2374,13 +2416,7 @@ async function linkWithAi() {
   if (groups.blocked.length) {
     const names = groups.blocked.slice(0, 5).map(esc).join(', ') + (groups.blocked.length > 5 ? `, and ${fmt(groups.blocked.length - 5)} more` : '');
     rows.push({ header: 'Waiting on your download helper' }, { info: true, tone: 'warn', title: `${plural(groups.blocked.length, 'document')} from ${[...blocked].join(', ')}`, detail: names });
-    helperCode = null;
-    fetch('helper/cloudflare-worker.js', { cache: 'no-cache' }).then((r) => (r.ok ? r.text() : null)).then((code) => {
-      if (code) helperCode = code.replace(/const ALLOWED_SITES = \[([\s\S]*?)\];/, (all, body) => {
-        const missing = [...blocked].filter((h) => !new RegExp(`'${h.replace(/\./g, '\\.')}'`).test(body));
-        return missing.length ? `const ALLOWED_SITES = [${body.replace(/\s*$/, '')}\n${missing.map((h) => `  '${h}',`).join('\n')}\n];` : all;
-      });
-    }).catch(() => {});
+    loadHelperCode();
   }
   sec(destName ? `New documents → “${destName}”` : 'New documents', groups.fresh);
   sec('Couldn’t add these', groups.freshBad);
@@ -2757,8 +2793,7 @@ function bind() {
   $('#reviewIntro').addEventListener('click', (e) => {
     const b = e.target.closest('[data-copyhelper]');
     if (!b) return;
-    if (helperCode && copyText(helperCode)) { b.textContent = 'Copied ✓ — now paste it in Cloudflare'; b.classList.add('done'); }
-    else { b.textContent = 'Couldn’t copy — open the code on GitHub instead'; window.open('https://github.com/Frenchbear1/Instant-Search/blob/main/helper/cloudflare-worker.js', '_blank', 'noopener'); }
+    copyHelperCode(b);
   });
   $('#aiMode').addEventListener('click', (e) => { const b = e.target.closest('[data-m]'); if (b) { setAiMode(b.dataset.m); setAiStatus(''); } });
   $('#aiDest').addEventListener('change', (e) => { e.target.dataset.picked = '1'; $('#aiDestNameRow').hidden = e.target.value !== 'new'; });
@@ -2778,8 +2813,16 @@ function bind() {
     }
   });
   $('#autoCheck').addEventListener('change', (e) => { prefs.autoCheck = e.target.checked; savePrefs(); });
+  $('#helperCopy').addEventListener('click', (e) => copyHelperCode(e.currentTarget));
   $('#helperTest').addEventListener('click', async () => {
-    const v = $('#helperUrl').value.trim();
+    let v = $('#helperUrl').value.trim();
+    if (v && !/^https?:\/\//i.test(v)) v = 'https://' + v;
+    // this device made the key: put it back on an address pasted without it
+    let stored = '';
+    try { stored = localStorage.getItem(KEY_STORE) || ''; } catch {}
+    if (v && !keyOf(v) && stored) v = withKey(v, stored);
+    if (keyOf(v)) { try { localStorage.setItem(KEY_STORE, keyOf(v)); } catch {} }
+    $('#helperUrl').value = v;
     helper.set(v);
     $('#helperState').textContent = v ? 'testing…' : 'not set up';
     $('#helperState').className = '';
@@ -2788,9 +2831,17 @@ function bind() {
       const res = await fetch(v, { cache: 'no-store' });
       const text = await res.text();
       if (!res.ok || !/download helper/i.test(text)) throw new Error('unexpected answer');
-      $('#helperState').textContent = 'working ✓';
+      if (/key (missing|wrong)/i.test(text)) {
+        $('#helperState').textContent = 'needs its key';
+        setLinkStatus('The helper is running but needs its key. On the device where you set it up, copy the whole helper address (it ends in ?key=…) and paste it here.', true);
+        return;
+      }
+      const anySite = /any site/i.test(text);
+      $('#helperState').textContent = anySite ? 'working ✓' : 'working ✓ · listed sites only';
       $('#helperState').className = 'ok';
-      setLinkStatus('Download helper is working. Try your link again.');
+      setLinkStatus(anySite
+        ? 'Download helper is working and can download from any site. Try your link again.'
+        : 'Download helper is working, but only for the sites listed in it. Press Copy helper code and paste it into your worker on Cloudflare to allow any site.');
       try { localStorage.removeItem('instant-search:direct'); } catch {}
     } catch {
       $('#helperState').textContent = 'not reachable';

@@ -56,22 +56,25 @@ Then:
 
 **Yearly editions:** documents whose link has the year in it (like govinfo's `CFR-2025-title14-…-part61.pdf`) are checked for next year's edition when you press ↻, and you're offered it once it's out.
 
-Links go through the download helper, so the site has to be in its `ALLOWED_SITES` list (faa.gov, govinfo.gov and ecfr.gov by default). If you set the helper up earlier, update it: paste the new worker code in again and deploy.
+Links go through the download helper, which can download from any site once it's set up with **Copy helper code** (see below). If a link is refused because an older helper only allows certain sites, the app tells you and gives you the updated code to paste.
 
 ### Setting up the download helper (one time, free, about 5 minutes)
 
-Browsers don't let one website read files from another unless that site allows it, and faa.gov doesn't. The helper is a tiny program on Cloudflare's free plan that fetches the files for the app. It only fetches from the sites you list in it.
+Browsers don't let one website read files from another unless that site allows it, and faa.gov doesn't. The helper is a tiny program on Cloudflare's free plan that fetches the files for the app. It can download from any site, and it comes with your own secret key so nobody else can use it.
 
 1. Go to **https://dash.cloudflare.com** and create a free account (or sign in).
 2. In the left menu open **Workers & Pages** (it may be under **Compute**).
 3. Click **Create application**, then **Start with Hello World!**. Name it `instant-search-helper` and click **Deploy**.
-4. On the next screen click **Edit code**.
-5. Delete everything in the editor. Open [`helper/cloudflare-worker.js`](helper/cloudflare-worker.js) in this repo, copy all of it, and paste it in.
-6. Click **Deploy** (top right).
-7. Copy the worker's address. It looks like `https://instant-search-helper.YOUR-NAME.workers.dev`. Opening it in a browser should show *Instant Search download helper is running.*
-8. In Instant Search: **▾ next to Add documents → Add from a web link… → Download helper**, paste the address, and click **Save & test**. It should say **working ✓**.
+4. Copy the worker's address. It looks like `https://instant-search-helper.YOUR-NAME.workers.dev`.
+5. In Instant Search: **▾ next to Add documents → Add from a web link… → Download helper**. Paste the address, then press **Copy helper code**.
+6. Back in Cloudflare, click **Edit code**, select everything in the editor, paste, and click **Deploy** (top right).
+7. In Instant Search press **Save & test**. It should say **working ✓**.
 
-To link documents from other sites, add them to `ALLOWED_SITES` at the top of the worker code and deploy again. To make sure only your own site can use the helper, put your site's address in `ALLOWED_PAGES`, e.g. `'https://frenchbear1.github.io'`.
+**Your key** is part of the helper address the app saves (it ends in `?key=…`). To use the helper on your phone or iPad, open **Download helper** there and paste that whole address (copy it from the device where you set it up). Anyone without the key gets turned away, and the helper never fetches from local or private network addresses.
+
+**Already set up an older helper?** Press **Copy helper code**, paste it over the old code in Cloudflare and deploy. The old one only allowed the sites listed in it.
+
+If you'd rather allow only certain sites, change `ALLOWED_SITES = ['*']` at the top of the code to a list such as `['faa.gov', 'govinfo.gov']`. To also make sure only your own site can use it, put your site's address in `ALLOWED_PAGES`, e.g. `'https://frenchbear1.github.io'`.
 
 Cloudflare's button names change now and then; if one doesn't match exactly, look for the closest equivalent.
 

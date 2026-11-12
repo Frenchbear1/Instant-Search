@@ -3,19 +3,22 @@
 // Your Instant Search site runs entirely in the browser, and browsers won't let it read files from
 // sites like faa.gov directly. This worker fetches the file for it and passes it straight back.
 //
-// It only fetches from the sites listed in ALLOWED_SITES, so nobody else can use it as a general proxy.
-// Add any other site you want to link documents from (subdomains are included automatically).
+// Easiest setup: in Instant Search, open "Add from a web link" -> "Download helper" -> "Copy helper code".
+// That copies this code with your own secret key already filled in. Paste it here and deploy.
 
-const ALLOWED_SITES = [
-  'faa.gov',
-  'govinfo.gov', // the official CFR (FARs) PDFs
-  'ecfr.gov',
-  // 'ntsb.gov',
-];
+// Which sites the helper may fetch from. '*' means any site; it needs ACCESS_KEY below, so only you can use it.
+// To allow only certain sites instead, list them, e.g. ['faa.gov', 'govinfo.gov'] (subdomains included).
+const ALLOWED_SITES = ['*'];
 
-// Optional: only answer requests coming from your own Instant Search site, e.g.
+// Your secret key. The app adds it to every request (it's part of the helper address you paste into the app,
+// e.g. https://instant-search-helper.you.workers.dev/?key=...). Without it, nobody else can use your helper.
+const ACCESS_KEY = '';
+
+// Optional: also only answer requests coming from your own Instant Search site, e.g.
 // const ALLOWED_PAGES = ['https://frenchbear1.github.io'];
 const ALLOWED_PAGES = [];
+
+const BLOCK_PRIVATE = true; // never fetch from local or private network addresses
 
 const CORS = {
   'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
@@ -24,8 +27,20 @@ const CORS = {
   'Access-Control-Max-Age': '86400',
 };
 
+function privateHost(hostname) {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal')) return true;
+  if (h.includes(':')) return h === '::1' || h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80') || h.startsWith('::ffff:');
+  const m = h.match(/^(\d+)\.(\d+)\.\d+\.\d+$/);
+  if (!m) return false;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
+}
+
 function allowedSite(hostname) {
   hostname = hostname.toLowerCase();
+  if (BLOCK_PRIVATE && privateHost(hostname)) return false;
+  if (ALLOWED_SITES.includes('*')) return !!ACCESS_KEY;
   return ALLOWED_SITES.some((s) => hostname === s || hostname.endsWith('.' + s));
 }
 
@@ -44,13 +59,23 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsFor(request) });
     if (request.method !== 'GET' && request.method !== 'HEAD') return refuse(request, 'Only GET and HEAD are allowed', 405);
 
-    const target = new URL(request.url).searchParams.get('url');
-    if (!target) return new Response('Instant Search download helper is running.', { headers: { ...corsFor(request), 'Content-Type': 'text/plain' } });
+    const params = new URL(request.url).searchParams;
+    const keyOk = !ACCESS_KEY || params.get('key') === ACCESS_KEY;
+    const target = params.get('url');
+    if (!target) {
+      const state = !keyOk ? (params.get('key') ? ' (key wrong)' : ' (key missing)') : ALLOWED_SITES.includes('*') ? (ACCESS_KEY ? ' (any site)' : ' (needs a key: use Copy helper code in the app)') : ' (listed sites only)';
+      return new Response('Instant Search download helper is running.' + state, { headers: { ...corsFor(request), 'Content-Type': 'text/plain' } });
+    }
+    if (!keyOk) return refuse(request, "The helper's key doesn't match. Paste the full helper address (with ?key=...) into the app.");
 
     let url;
     try { url = new URL(target); } catch { return refuse(request, "That isn't a valid link", 400); }
     if (url.protocol !== 'https:' && url.protocol !== 'http:') return refuse(request, 'Only web links can be fetched', 400);
-    if (!allowedSite(url.hostname)) return refuse(request, `The helper isn't set up to fetch from ${url.hostname}. Add it to ALLOWED_SITES in the worker.`);
+    if (!allowedSite(url.hostname)) {
+      if (BLOCK_PRIVATE && privateHost(url.hostname)) return refuse(request, "The helper doesn't fetch from local or private network addresses");
+      if (ALLOWED_SITES.includes('*')) return refuse(request, `The helper isn't set up to fetch from ${url.hostname}: it needs its key. Use Copy helper code in the app.`);
+      return refuse(request, `The helper isn't set up to fetch from ${url.hostname}. Add it to ALLOWED_SITES in the worker.`);
+    }
 
     const headers = { 'User-Agent': 'Mozilla/5.0 (Instant Search download helper)', Accept: '*/*' };
     for (const h of ['If-None-Match', 'If-Modified-Since']) {

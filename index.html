@@ -195,7 +195,8 @@
         <summary>Download helper <span id="helperState"></span></summary>
         <p>Many official sites (including faa.gov) don’t let other websites download their files directly. A small free helper you run on Cloudflare fetches them for this app. Setup takes about 5 minutes — <a href="https://github.com/Frenchbear1/Instant-Search#linking-documents-from-websites" target="_blank" rel="noopener">step-by-step guide</a>.</p>
         <label class="link-row">Helper address <input id="helperUrl" type="url" placeholder="https://instant-search-helper.yourname.workers.dev" autocomplete="off" spellcheck="false" /></label>
-        <div class="link-actions"><button class="btn" type="button" id="helperTest">Save &amp; test</button></div>
+        <p class="muted small">Press <b>Copy helper code</b> and paste it into your worker on Cloudflare (<b>Edit code</b> → select everything → paste → <b>Deploy</b>). It downloads from any site, and comes with your own secret key so only you can use it. The key is saved in the address above — to use the helper on your phone, copy the whole address from here.</p>
+        <div class="link-actions"><button class="btn" type="button" id="helperCopy">Copy helper code</button><button class="btn" type="button" id="helperTest">Save &amp; test</button></div>
         <label class="check-row"><input type="checkbox" id="autoCheck" /> Check linked sources for updates once a day when I open the app</label>
       </details>
     </form>
