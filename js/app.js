@@ -850,12 +850,6 @@ function updateCounter() {
   $('#clearBtn').hidden = !q.value;
 }
 
-function termCounts(v) {
-  const counts = new Map();
-  for (const R of v.list) for (const p of R.pages) for (const r of p.ranges) counts.set(r[2], (counts.get(r[2]) || 0) + 1);
-  return counts;
-}
-
 function updateSummary() {
   const box = $('#summary');
   const v = active;
@@ -867,29 +861,12 @@ function updateSummary() {
       <span class="reader-title"><span class="ftype ${doc?.kind}">${KIND_LABEL[doc?.kind] || ''}</span><b>${esc(doc?.name || '')}</b></span>
       <label class="jump">Page <input id="jumpInput" type="number" min="1" max="${count}" value="1" inputmode="numeric"> <span>of ${fmt(count)}</span></label>`;
   }
-  let terms = '';
-  if (S.matcher && S.terms.length) {
-    const counts = termCounts(v);
-    const chips = S.terms.map((t) => t.neg
-      ? `<span class="term neg" title="Pages with this are excluded">−${esc(t.label)}</span>`
-      : `<button class="term c${t.color}" data-color="${t.color}" title="Jump to next “${esc(t.label)}”"><i></i>${esc(t.label)}<span>${fmt(counts.get(t.color) || 0)}</span></button>`);
-    terms = `<span class="terms">${chips.join('')}</span>`;
-  }
-  // when the toolbar is minimized, the word chips ride along above the results instead
-  const termsUp = !(prefs.compact && v.kind === 'results');
-  if (termsUp) html += terms;
   setHTML(box, html);
   box.hidden = !html;
 
   const head = $('#resultsHead');
   const showHead = v.kind === 'results' && S.matcher && v.list.length;
   head.hidden = !showHead;
-  if (showHead) {
-    const pages = v.list.reduce((a, R) => a + R.pages.length, 0);
-    const docCount = new Set(v.list.map((R) => R.doc.id)).size;
-    const scope = S.docs.filter((d) => d.enabled && searchable(d)).length;
-    setHTML($('#stat'), `<span><b>${fmt(v.total)}</b> ${v.total === 1 ? 'hit' : 'hits'} on <b>${fmt(pages)}</b> ${pages === 1 ? 'page' : 'pages'} in <b>${fmt(docCount)}</b> of ${plural(scope, 'document')}</span>${termsUp ? '' : terms}`);
-  }
   const dock = $('#dock');
   dock.hidden = !(v.kind === 'reader' || showHead);
   $('#mbar').hidden = dock.hidden;

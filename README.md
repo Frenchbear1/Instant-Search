@@ -10,7 +10,7 @@ Open `index.html` from any static host (it's a plain static site, no build step)
 - **Results are the pages themselves**, not snippets. Only pages with hits are shown; the pages in between are folded away with buttons to open the page right after a hit, the page right before the next one, or the whole gap.
 - **Six search types**: Any word, All words, Exact phrase, Near (within N words), Boolean (`AND` `OR` `NOT` `( )`) and Regex.
 - **Works in every type**: `"quoted phrases"`, `-exclude`, `wild*cards`, match case, whole words only.
-- **Hit navigation**: Enter / Shift+Enter (or N, F3) steps through every hit across every document. Click a coloured term above the results to step through just that word.
+- **Hit navigation**: Enter / Shift+Enter (or N, F3) steps through every hit across every document.
 - **Text or Original** for PDFs and HTML: read clean reflowed text, or the real thing with highlights on it. PDFs show the actual page; HTML files show the real web page in a locked-down frame (no scripts, links and forms disabled), scrolled to that page's match. Switch globally or per page. Scanned PDF pages with no text show the original automatically.
 - **Read whole** opens one document in full, still highlighted, with a page jump box.
 - **Folders**: tick a folder to search everything in it (or untick it to leave it out); the target button searches only that folder. Drag documents between folders, drop files from your computer straight onto a folder, add a whole folder from your computer (it becomes a library folder), or use the ▾ next to Add documents to import a batch into an existing or new folder. Deleting a folder keeps its documents.
