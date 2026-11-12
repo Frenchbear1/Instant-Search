@@ -267,6 +267,26 @@ body[data-view="results"] #reader, body[data-view="reader"] #results { display: 
 .chip-btn svg { width: 14px; height: 14px; }
 .chip-btn:hover { background: var(--card); border-color: var(--line); color: var(--ink); box-shadow: var(--shadow-sm); }
 
+/* Ranked pages (sort: pages with most hits) */
+.doc-sec.ranked { margin-bottom: 22px; }
+.rank {
+  display: inline-grid; place-items: center; flex: none; min-width: 26px; height: 22px; padding: 0 6px;
+  border-radius: 7px; background: var(--ink); color: var(--bg); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.ol-rows { display: flex; flex-direction: column; gap: 2px; }
+.ol-row {
+  display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 6px;
+  padding: 5px 6px; border-radius: 8px; text-align: left; font-size: 12px; transition: background 0.15s;
+}
+.ol-row:hover { background: var(--accent-soft); }
+.ol-rank { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11px; text-align: right; }
+.ol-where { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.ol-where b { font-weight: 650; font-variant-numeric: tabular-nums; }
+.ol-where span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
+.ol-row em { font-style: normal; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+.ol-row.on { background: var(--accent); }
+.ol-row.on, .ol-row.on .ol-rank, .ol-row.on .ol-where span, .ol-row.on em { color: var(--accent-ink); }
+
 /* Page cards */
 .page {
   margin: 0 0 14px; border-radius: 14px; background: var(--card); border: 1px solid var(--line);

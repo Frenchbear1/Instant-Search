@@ -60,6 +60,8 @@ let active = results;
 const q = $('#q');
 const docById = (id) => S.docs.find((d) => d.id === id);
 const pkey = (docId, n) => `${docId}:${n}`;
+// A group is one section: a whole document, or (when ranking pages) a single hit page and the pages opened around it.
+const groupKey = (R, doc) => (R?.flat ? pkey(doc.id, R.pages[0].n) : doc.id);
 const searchable = (d) => !d.status;
 
 // ---------- searching ----------
@@ -82,7 +84,15 @@ function computeHits(docs) {
 
 function assign(v, list) {
   if (v.kind === 'results' && prefs.sort === 'hits') list.sort((a, b) => b.hits - a.hits);
+  if (v.kind === 'results' && prefs.sort === 'pages') {
+    // every hit page from every document, ranked by how many hits it has
+    const flat = [];
+    list.forEach((R, di) => R.pages.forEach((p) => flat.push({ doc: R.doc, pages: [p], hits: p.ranges.length, flat: true, di })));
+    flat.sort((a, b) => b.hits - a.hits || a.di - b.di || a.pages[0].n - b.pages[0].n);
+    list = flat;
+  }
   v.list = list;
+  v.byKey = new Map(list.map((R) => [groupKey(R, R.doc), R]));
   v.info.clear();
   let h = 0;
   for (const R of list) {
@@ -160,8 +170,8 @@ function markup(text, ranges) {
   return html + esc(text.slice(pos));
 }
 
-function pageRanges(v, docId, n, text) {
-  const info = v.info.get(pkey(docId, n));
+function pageRanges(v, docId, n, text, ctx) {
+  const info = ctx ? null : v.info.get(pkey(docId, n));
   if (info) return info.ranges.map((r, i) => [r[0], r[1], r[2], info.h0 + i]);
   return S.matcher ? S.matcher.soft(text).map((r) => [r[0], r[1], r[2], null]) : [];
 }
@@ -199,11 +209,12 @@ const ioFar = new IntersectionObserver(
   { rootMargin: '5000px 0px' }
 );
 
-function headHtml(v, doc, n) {
+function headHtml(v, doc, n, ctx) {
   const info = v.info.get(pkey(doc.id, n));
   const count = S.texts.get(doc.id)?.length || 0;
   let badge = '';
-  if (info) badge = `<span class="phits">${plural(info.ranges.length, 'hit')}</span>`;
+  if (info && ctx) badge = `<span class="phits none">${plural(info.ranges.length, 'hit')} · ranked on its own</span>`;
+  else if (info) badge = `<span class="phits">${plural(info.ranges.length, 'hit')}</span>`;
   else if (v.kind === 'results') badge = '<span class="phits none">No hits</span>';
   const mode = pageMode(doc, n);
   const toggle = doc.kind === 'pdf'
@@ -215,17 +226,19 @@ function headHtml(v, doc, n) {
   return `<span class="pno">Page ${n + 1}<span class="of"> / ${count}</span></span>${badge}<span class="grow"></span>${toggle}${open}`;
 }
 
-function pageEl(v, doc, n) {
-  const info = v.info.get(pkey(doc.id, n));
+function pageEl(v, doc, n, R) {
+  const ctx = !!(R?.flat && n !== R.pages[0].n); // a neighbouring page opened for context
+  const info = ctx ? null : v.info.get(pkey(doc.id, n));
   const art = el('article', `page${info ? ' hit' : ''}${!info && v.kind === 'results' ? ' extra' : ''}`);
   art.dataset.doc = doc.id;
   art.dataset.n = n;
   art._v = v;
-  const head = el('header', 'page-head', headHtml(v, doc, n));
+  art._ctx = ctx;
+  const head = el('header', 'page-head', headHtml(v, doc, n, ctx));
   const body = el('div', 'page-body');
   body.style.height = estimate(doc, n) + 'px';
   art.append(head, body);
-  v.pageEls.set(pkey(doc.id, n), art);
+  v.pageEls.set(ctx ? `${pkey(doc.id, n)}@${groupKey(R, doc)}` : pkey(doc.id, n), art);
   io.observe(art);
   ioFar.observe(art);
   return art;
@@ -239,7 +252,7 @@ function fill(art) {
   const body = art.lastElementChild;
   if (!doc) return Promise.resolve();
   const text = S.texts.get(doc.id)?.[n] || '';
-  const ranges = pageRanges(v, doc.id, n, text);
+  const ranges = pageRanges(v, doc.id, n, text, art._ctx);
   const token = (art._token = (art._token || 0) + 1);
 
   art._filled = (async () => {
@@ -288,9 +301,9 @@ function refill(art) {
   const doc = docById(art.dataset.doc);
   if (!doc) return;
   const n = Number(art.dataset.n);
-  const info = v.info.get(pkey(doc.id, n));
+  const info = art._ctx ? null : v.info.get(pkey(doc.id, n));
   art.classList.toggle('hit', !!info);
-  art.firstElementChild.innerHTML = headHtml(v, doc, n);
+  art.firstElementChild.innerHTML = headHtml(v, doc, n, art._ctx);
   const wasFilled = !!art._filled;
   const body = art.lastElementChild;
   const h = body.offsetHeight;
@@ -307,22 +320,23 @@ function refill(art) {
 }
 
 // ---------- gaps between hit pages ----------
-function visiblePages(v, doc) {
+function visiblePages(v, doc, R) {
   const count = S.texts.get(doc.id)?.length || 0;
   if (v.kind === 'reader') return Array.from({ length: count }, (_, i) => i);
-  const R = v.list.find((r) => r.doc.id === doc.id);
   const set = new Set(R ? R.pages.map((p) => p.n) : []);
-  for (const n of v.revealed.get(doc.id) || []) set.add(n);
+  for (const n of v.revealed.get(groupKey(R, doc)) || []) set.add(n);
   return [...set].sort((a, b) => a - b);
 }
 
-function gapEl(doc, a, b, count) {
+function gapEl(doc, a, b, count, R) {
   const hidden = b - a - 1;
   const g = el('div', 'gap');
   g.dataset.doc = doc.id;
+  g.dataset.key = groupKey(R, doc);
+  g._R = R;
   g.dataset.a = a;
   g.dataset.b = b;
-  const label = a < 0 ? `${plural(hidden, 'page')} before` : b >= count ? `${plural(hidden, 'more page')}` : `${plural(hidden, 'page')} without hits`;
+  const label = a < 0 ? `${plural(hidden, 'page')} before` : b >= count ? `${plural(hidden, 'more page')}` : R?.flat ? plural(hidden, 'page') : `${plural(hidden, 'page')} without hits`;
   let html = '';
   if (hidden === 1) {
     html = `<span class="gap-label">${label}</span><button class="gap-btn" data-act="all">Show page ${a + 2}</button>`;
@@ -336,17 +350,17 @@ function gapEl(doc, a, b, count) {
   return g;
 }
 
-function nodesBetween(v, doc, vis, a, b) {
+function nodesBetween(v, doc, vis, a, b, R) {
   const count = S.texts.get(doc.id)?.length || 0;
   const nodes = [];
   let prev = a;
   for (const n of vis) {
     if (n <= a || n >= b) continue;
-    if (n > prev + 1) nodes.push(gapEl(doc, prev, n, count));
-    nodes.push(pageEl(v, doc, n));
+    if (n > prev + 1) nodes.push(gapEl(doc, prev, n, count, R));
+    nodes.push(pageEl(v, doc, n, R));
     prev = n;
   }
-  if (b > prev + 1) nodes.push(gapEl(doc, prev, b, count));
+  if (b > prev + 1) nodes.push(gapEl(doc, prev, b, count, R));
   return nodes;
 }
 
@@ -356,12 +370,14 @@ function onGap(g, act) {
   if (!doc) return;
   const a = Number(g.dataset.a);
   const b = Number(g.dataset.b);
-  if (!v.revealed.has(doc.id)) v.revealed.set(doc.id, new Set());
-  const set = v.revealed.get(doc.id);
+  const R = g._R;
+  const key = g.dataset.key;
+  if (!v.revealed.has(key)) v.revealed.set(key, new Set());
+  const set = v.revealed.get(key);
   if (act === 'after') set.add(a + 1);
   else if (act === 'before') set.add(b - 1);
   else for (let n = a + 1; n < b; n++) set.add(n);
-  const nodes = nodesBetween(v, doc, visiblePages(v, doc), a, b);
+  const nodes = nodesBetween(v, doc, visiblePages(v, doc, R), a, b, R);
   g.replaceWith(...nodes);
   const pages = nodes.filter((x) => x.classList.contains('page'));
   (act === 'before' ? pages[pages.length - 1] : pages[0])?.classList.add('fresh');
@@ -370,6 +386,10 @@ function onGap(g, act) {
 // ---------- rendering views ----------
 function docHeadHtml(v, doc, R) {
   const count = S.texts.get(doc.id)?.length || 0;
+  if (R?.flat) {
+    const rank = v.list.indexOf(R) + 1;
+    return `<span class="rank">${fmt(rank)}</span><span class="ftype ${doc.kind}">${KIND_LABEL[doc.kind] || 'TXT'}</span><h2 title="${esc(doc.name)}">${esc(doc.name)}</h2><span class="dstat"><b>${plural(R.hits, 'hit')}</b> on page ${fmt(R.pages[0].n + 1)} of ${fmt(count)}</span><span class="grow"></span>`;
+  }
   const stat = R
     ? `<b>${plural(R.hits, 'hit')}</b> on ${plural(R.pages.length, 'page')} of ${fmt(count)}`
     : S.matcher ? `No hits · ${plural(count, 'page')}` : plural(count, 'page');
@@ -382,10 +402,12 @@ function docHeadHtml(v, doc, R) {
 function sectionEl(v, doc, R) {
   const sec = el('section', 'doc-sec');
   sec.dataset.doc = doc.id;
+  sec.dataset.key = groupKey(R, doc);
+  if (R?.flat) sec.classList.add('ranked');
   sec.append(el('div', 'doc-head', docHeadHtml(v, doc, R)));
   const pages = el('div', 'doc-pages');
   const count = S.texts.get(doc.id)?.length || 0;
-  pages.append(...nodesBetween(v, doc, visiblePages(v, doc), -1, count));
+  pages.append(...nodesBetween(v, doc, visiblePages(v, doc, R), -1, count, R));
   sec.append(pages);
   return sec;
 }
@@ -430,7 +452,7 @@ function refreshInPlace(v) {
   for (const sec of $$('.doc-sec', v.root)) {
     const doc = docById(sec.dataset.doc);
     if (!doc) continue;
-    const R = v.list.find((r) => r.doc.id === doc.id);
+    const R = v.byKey?.get(sec.dataset.key);
     sec.firstElementChild.innerHTML = docHeadHtml(v, doc, R);
   }
   for (const art of v.pageEls.values()) refill(art);
@@ -611,9 +633,10 @@ async function scrollToPage(v, docId, n) {
     const doc = docById(docId);
     const g = $$('.gap', v.root).find((x) => x.dataset.doc === docId && Number(x.dataset.a) < n && Number(x.dataset.b) > n);
     if (doc && g) {
-      if (!v.revealed.has(docId)) v.revealed.set(docId, new Set());
-      v.revealed.get(docId).add(n);
-      g.replaceWith(...nodesBetween(v, doc, visiblePages(v, doc), Number(g.dataset.a), Number(g.dataset.b)));
+      const key = g.dataset.key;
+      if (!v.revealed.has(key)) v.revealed.set(key, new Set());
+      v.revealed.get(key).add(n);
+      g.replaceWith(...nodesBetween(v, doc, visiblePages(v, doc, g._R), Number(g.dataset.a), Number(g.dataset.b), g._R));
       art = v.pageEls.get(pkey(docId, n));
     }
   }
@@ -681,8 +704,9 @@ function updateSummary() {
       <label class="jump">Page <input id="jumpInput" type="number" min="1" max="${count}" value="1" inputmode="numeric"> <span>of ${fmt(count)}</span></label>`;
   } else if (S.matcher && v.list.length) {
     const pages = v.list.reduce((a, R) => a + R.pages.length, 0);
+    const docCount = new Set(v.list.map((R) => R.doc.id)).size;
     const scope = S.docs.filter((d) => d.enabled && searchable(d)).length;
-    html += `<span class="stat"><b>${fmt(v.total)}</b> ${v.total === 1 ? 'hit' : 'hits'} on <b>${fmt(pages)}</b> ${pages === 1 ? 'page' : 'pages'} in <b>${fmt(v.list.length)}</b> of ${plural(scope, 'document')}</span>`;
+    html += `<span class="stat"><b>${fmt(v.total)}</b> ${v.total === 1 ? 'hit' : 'hits'} on <b>${fmt(pages)}</b> ${pages === 1 ? 'page' : 'pages'} in <b>${fmt(docCount)}</b> of ${plural(scope, 'document')}</span>`;
   }
   if (S.matcher && S.terms.length) {
     const counts = termCounts(v);
@@ -700,6 +724,16 @@ function updateOutline() {
   const v = active;
   if (!S.matcher || !v.list.length) { box.innerHTML = ''; box.hidden = true; return; }
   box.hidden = false;
+  if (v.list[0]?.flat) {
+    const rows = v.list.slice(0, 400).map((R, i) => {
+      const p = R.pages[0];
+      return `<button class="ol-row" data-doc="${R.doc.id}" data-n="${p.n}" title="${esc(R.doc.name)} · page ${p.n + 1}"><span class="ol-rank">${i + 1}</span><span class="ol-where"><b>p. ${p.n + 1}</b><span>${esc(R.doc.name)}</span></span><em>${fmt(R.hits)}</em></button>`;
+    }).join('');
+    const more = v.list.length > 400 ? `<span class="ol-more">+${fmt(v.list.length - 400)} more pages</span>` : '';
+    box.innerHTML = `<div class="ol-title">Pages by hits</div><div class="ol-rows">${rows}${more}</div>`;
+    trackPosition();
+    return;
+  }
   box.innerHTML = `<div class="ol-title">${v.kind === 'reader' ? 'Pages with hits' : 'Jump to'}</div>` + v.list.map((R) => {
     const chips = R.pages.slice(0, 500).map((p) => `<button class="ol-p" data-doc="${R.doc.id}" data-n="${p.n}" title="Page ${p.n + 1} · ${plural(p.ranges.length, 'hit')}">${p.n + 1}${p.ranges.length > 1 ? `<sup>${p.ranges.length}</sup>` : ''}</button>`).join('');
     const more = R.pages.length > 500 ? `<span class="ol-more">+${fmt(R.pages.length - 500)}</span>` : '';
@@ -711,7 +745,8 @@ function updateOutline() {
 
 function renderLibrary() {
   const ul = $('#lib');
-  const hits = new Map(results.list.map((R) => [R.doc.id, R.hits]));
+  const hits = new Map();
+  for (const R of results.list) hits.set(R.doc.id, (hits.get(R.doc.id) || 0) + R.hits);
   const ready = S.docs.filter(searchable);
   $('#libCount').textContent = S.docs.length ? `${ready.filter((d) => d.enabled).length}/${ready.length}` : '';
   $('#toggleAll').hidden = ready.length < 2;
@@ -774,9 +809,9 @@ function trackPosition() {
     const x = v.root.getBoundingClientRect().left + 30;
     const hit = document.elementFromPoint(x, topOffset() + ($('.doc-head')?.offsetHeight || 0) + 24);
     const art = hit?.closest?.('.page') || null;
-    $$('#outline .ol-p.on').forEach((b) => b.classList.remove('on'));
+    $$('#outline .on').forEach((b) => b.classList.remove('on'));
     if (!art) return;
-    const chip = $(`#outline .ol-p[data-doc="${art.dataset.doc}"][data-n="${art.dataset.n}"]`);
+    const chip = $(`#outline :is(.ol-p, .ol-row)[data-doc="${art.dataset.doc}"][data-n="${art.dataset.n}"]`);
     if (chip) {
       chip.classList.add('on');
       const box = $('#outline');
@@ -1071,7 +1106,7 @@ function bind() {
     if (!info || !info.ranges.length) { scrollToPage(v, b.dataset.doc, Number(b.dataset.n)); return; }
     // First click lands on the page's first hit; clicking the same page again steps through its hits.
     const onPage = v.cur >= info.h0 && v.cur < info.h0 + info.ranges.length;
-    const k = onPage && b.classList.contains('ol-p') ? info.h0 + ((v.cur - info.h0 + 1) % info.ranges.length) : info.h0;
+    const k = onPage && b.matches('.ol-p, .ol-row') ? info.h0 + ((v.cur - info.h0 + 1) % info.ranges.length) : info.h0;
     goTo(v, k);
   });
 
