@@ -5,8 +5,8 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#f5f5f7",
-  "theme_color": "#0a84ff",
+  "background_color": "#f5f4f1",
+  "theme_color": "#f5f4f1",
   "icons": [
     {
       "src": "icons/icon-192x192.png",
@@ -30,5 +30,6 @@
       "type": "image/png",
       "purpose": "maskable"
     }
-  ]
+  ],
+  "description": "Search across all your documents and read the pages that match."
 }
