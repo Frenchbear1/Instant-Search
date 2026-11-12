@@ -292,10 +292,13 @@ function fill(art) {
   const text = S.texts.get(doc.id)?.[n] || '';
   const ranges = pageRanges(v, doc.id, n, text, art._ctx);
   const token = (art._token = (art._token || 0) + 1);
+  // The old content (if any) stays on screen until the new one is ready, then gets released.
+  const swapped = () => { art._prevCleanup?.(); art._prevCleanup = null; };
+  const showLoading = () => { if (!body.childElementCount) body.classList.add('loading'); };
 
   art._filled = (async () => {
     if (pageMode(doc, n) === 'original' && doc.kind === 'html') {
-      body.classList.add('loading');
+      showLoading();
       try {
         const cleanup = await renderHtmlPage({
           docId: doc.id, n, pageCount: S.texts.get(doc.id)?.length || 1, host: body,
@@ -303,22 +306,29 @@ function fill(art) {
         });
         if (token !== art._token) { cleanup(); return; }
         art._cleanup = cleanup;
+        swapped();
       } catch (err) {
+        if (token !== art._token) return;
         body.innerHTML = `<p class="empty-page">${I.warn}<span>Couldn’t show the original (${esc(err.message)}).</span></p>`;
+        swapped();
       }
       body.classList.remove('loading');
     } else if (pageMode(doc, n) === 'original') {
-      body.classList.add('loading');
+      showLoading();
       try {
         const pdf = await getPdf(doc.id, () => store.file(doc.id));
         if (token !== art._token) return;
-        const cleanup = await renderPdfPage(pdf, n, body, ranges, BASE_W * zoomValue());
-        if (token !== art._token) { cleanup(); return; }
-        art._cleanup = cleanup;
+        const r = await renderPdfPage(pdf, n, body, ranges, BASE_W * zoomValue());
+        if (token !== art._token) { r.cleanup(); return; }
+        r.show();
+        art._cleanup = r.cleanup;
+        swapped();
         const fr = body.querySelector('.pdf-frame');
         if (fr) S.pageAspect = fr.offsetHeight / fr.offsetWidth || S.pageAspect;
       } catch (err) {
+        if (token !== art._token) return;
         body.innerHTML = `<p class="empty-page">${I.warn}<span>Couldn’t show the original page (${esc(err.message)}).</span></p>`;
+        swapped();
       }
       body.classList.remove('loading');
     } else {
@@ -326,6 +336,7 @@ function fill(art) {
       body.innerHTML = text.trim()
         ? `<div class="page-text">${markup(display, ranges)}</div>`
         : `<p class="empty-page">No text on this page${doc.kind === 'pdf' ? ' — it may be a scan or picture. Switch to <b>Original</b> to see it.' : '.'}</p>`;
+      swapped();
     }
     body.style.height = '';
     if (pageMode(doc, n) === 'text' && text.length > 600) {
@@ -342,6 +353,8 @@ function unfill(art) {
   body.style.height = body.offsetHeight + 'px';
   art._cleanup?.();
   art._cleanup = null;
+  art._prevCleanup?.();
+  art._prevCleanup = null;
   art._filled = null;
   art._token = (art._token || 0) + 1;
   body.replaceChildren();
@@ -357,15 +370,18 @@ function refill(art) {
   art.firstElementChild.innerHTML = headHtml(v, doc, n, art._ctx);
   const wasFilled = !!art._filled;
   const body = art.lastElementChild;
-  const h = body.offsetHeight;
-  art._cleanup?.();
+  // keep what's on screen; it's released once the new version has been swapped in
+  const old = [art._prevCleanup, art._cleanup].filter(Boolean);
+  art._prevCleanup = old.length ? () => old.forEach((f) => f()) : null;
   art._cleanup = null;
   art._filled = null;
   art._token = (art._token || 0) + 1;
-  if (wasFilled) {
-    body.style.height = h + 'px'; // hold the space while redrawing
+  if (wasFilled && body.childElementCount) {
     fill(art);
   } else {
+    art._prevCleanup?.();
+    art._prevCleanup = null;
+    body.replaceChildren();
     body.style.height = estimate(doc, n) + 'px';
   }
 }
@@ -465,37 +481,71 @@ function sectionEl(v, doc, R) {
   return sec;
 }
 
-function clearView(v) {
-  for (const art of v.pageEls.values()) {
+// Returns the drawn original pages (PDF canvases / HTML frames) so a rebuilt view can keep showing them
+// until their replacements are ready, instead of flashing empty cards.
+function clearView(v, { keep = false } = {}) {
+  const kept = new Map();
+  for (const [key, art] of v.pageEls) {
     io.unobserve(art);
     ioFar.unobserve(art);
-    art._cleanup?.();
+    const body = art.lastElementChild;
+    if (keep && art._cleanup && body.childElementCount) {
+      kept.set(key, { nodes: [...body.childNodes], height: body.offsetHeight, cleanup: [art._prevCleanup, art._cleanup].filter(Boolean) });
+    } else {
+      art._prevCleanup?.();
+      art._cleanup?.();
+    }
   }
   v.pageEls.clear();
   v.root.replaceChildren();
+  return kept;
+}
+
+// Fill everything on (or just off) screen right away, so the first painted frame already shows the pages.
+function fillVisibleNow(v, kept) {
+  for (const [key, art] of v.pageEls) {
+    const k = kept?.get(key);
+    if (k) {
+      art.lastElementChild.replaceChildren(...k.nodes);
+      art.lastElementChild.style.height = '';
+      art._prevCleanup = () => k.cleanup.forEach((f) => f());
+      kept.delete(key);
+    }
+  }
+  for (const k of kept?.values() || []) k.cleanup.forEach((f) => f());
+  const margin = innerHeight;
+  for (const art of v.pageEls.values()) {
+    const r = art.getBoundingClientRect();
+    if (r.bottom < -margin || r.top > innerHeight + margin) continue;
+    fill(art);
+  }
 }
 
 function renderView(v, { keepScroll = true } = {}) {
-  clearView(v);
+  const kept = clearView(v, { keep: true });
   v.dirty = false;
   if (v.kind === 'reader') {
     const doc = docById(v.docId);
     if (doc) v.root.append(sectionEl(v, doc, v.list[0]));
+    fillVisibleNow(v, kept);
     return;
   }
-  if (!S.docs.length) { v.root.append(emptyLibrary()); return; }
-  if (S.error) { v.root.append(stateBox('error', 'That search can’t run', esc(S.error))); return; }
-  if (!S.matcher) { v.root.append(idleState()); return; }
+  const done = () => fillVisibleNow(v, kept);
+  if (!S.docs.length) { v.root.append(emptyLibrary()); done(); return; }
+  if (S.error) { v.root.append(stateBox('error', 'That search can’t run', esc(S.error))); done(); return; }
+  if (!S.matcher) { v.root.append(idleState()); done(); return; }
   const scope = S.docs.filter((d) => d.enabled && searchable(d));
   if (!scope.length) {
     v.root.append(stateBox('none', 'No documents selected', 'Tick at least one document in the library to search it.'));
+    done();
     return;
   }
-  if (!v.list.length) { v.root.append(noResults(scope.length)); return; }
+  if (!v.list.length) { v.root.append(noResults(scope.length)); done(); return; }
   const frag = document.createDocumentFragment();
   for (const R of v.list) frag.append(sectionEl(v, R.doc, R));
   v.root.append(frag);
   if (!keepScroll) window.scrollTo({ top: 0, behavior: 'instant' });
+  done();
 }
 
 // Re-highlight without rebuilding the page list (keeps the reader where it is).

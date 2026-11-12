@@ -91,8 +91,8 @@ export function closePdf(docId) {
 }
 
 /**
- * Render page n (0-based) into `host`. ranges: [[start,end,color,hitIndex|null]]
- * Returns a cleanup function.
+ * Render page n (0-based) for `host`. ranges: [[start,end,color,hitIndex|null]]
+ * Returns { show, cleanup }: call show() to swap the finished page in (nothing changes on screen before that).
  */
 export async function renderPdfPage(pdf, n, host, ranges, width) {
   const page = await pdf.getPage(n + 1);
@@ -111,7 +111,7 @@ export async function renderPdfPage(pdf, n, host, ranges, width) {
   const layer = document.createElement('div');
   layer.className = 'pdf-hits';
   frame.append(canvas, layer);
-  host.replaceChildren(frame);
+  // Draw off-screen first; whatever is showing now (the old render, or text) stays until this is ready.
 
   const task = page.render({ canvasContext: canvas.getContext('2d', { alpha: false }), viewport: vp });
 
@@ -157,7 +157,9 @@ export async function renderPdfPage(pdf, n, host, ranges, width) {
     }
     layer.append(frag);
   }
-  try { await task.promise; } catch (e) { if (e?.name !== 'RenderingCancelledException') throw e; }
+  let cancelled = false;
+  try { await task.promise; } catch (e) { if (e?.name !== 'RenderingCancelledException') throw e; cancelled = true; }
   page.cleanup();
-  return () => { task.cancel(); canvas.width = canvas.height = 0; };
+  const cleanup = () => { task.cancel(); canvas.width = canvas.height = 0; frame.remove(); };
+  return { cleanup, show: () => { if (!cancelled) host.replaceChildren(frame); } };
 }

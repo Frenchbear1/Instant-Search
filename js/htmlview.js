@@ -34,7 +34,10 @@ export async function renderHtmlPage({ docId, n, pageCount, host, matcher, ordin
   frame.title = 'Original HTML';
   // keep any <!doctype> first so the page renders in the same mode it was written for
   frame.srcdoc = html.replace(/^(\s*<!doctype[^>]*>)?/i, (m) => m + CSP + STYLE);
-  host.replaceChildren(frame);
+  // If something is already showing, load the new frame invisibly on top and swap when it's ready.
+  const swapping = host.childElementCount > 0;
+  if (swapping) frame.classList.add('pending');
+  host.append(frame);
   await new Promise((r) => frame.addEventListener('load', r, { once: true }));
   const d = frame.contentDocument;
   if (!d || !d.body) return () => frame.remove();
@@ -78,6 +81,10 @@ export async function renderHtmlPage({ docId, n, pageCount, host, matcher, ordin
     se.scrollTop = r.top + se.scrollTop - frame.clientHeight / 3;
   } else if (pageCount > 1) {
     se.scrollTop = (n / pageCount) * Math.max(0, se.scrollHeight - frame.clientHeight);
+  }
+  if (swapping) {
+    for (const c of [...host.children]) if (c !== frame) c.remove();
+    frame.classList.remove('pending');
   }
   return () => frame.remove();
 }
