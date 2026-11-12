@@ -2,6 +2,7 @@ import { compile, MODES } from './search.js';
 import { store } from './store.js';
 import { readFile, kindOf, ACCEPT } from './ingest.js';
 import { getPdf, closePdf, renderPdfPage, EXTRACTOR_VERSION } from './pdf.js';
+import { renderHtmlPage, forgetHtml } from './htmlview.js';
 import { comboFromEvent, comboLabel, worksWhileTyping, isMac } from './keys.js';
 
 // ---------- small helpers ----------
@@ -28,6 +29,9 @@ const I = {
   image: '<svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>',
   text: '<svg viewBox="0 0 24 24"><path d="M5 6h14M5 10h14M5 14h14M5 18h9"/></svg>',
   warn: '<svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9L2 18a2 2 0 0 0 1.7 3h16.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>',
+  minus: '<svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg>',
+  fitW: '<svg viewBox="0 0 24 24"><path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4"/></svg>',
+  fitP: '<svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="1.5"/></svg>',
   folder: '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
   folderPlus: '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v5M9.5 13.5h5"/></svg>',
   chevron: '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>',
@@ -198,18 +202,32 @@ function pageRanges(v, docId, n, text, ctx) {
 
 // ---------- page cards ----------
 const override = new Map(); // per-page Text/Original choice
+// PDFs keep their file; HTML files added from now on keep their source too
+const hasOriginal = (doc) => doc.kind === 'pdf' || (doc.kind === 'html' && !!doc.hasOriginal);
 function pageMode(doc, n) {
-  if (doc.kind !== 'pdf') return 'text';
+  if (!hasOriginal(doc)) return 'text';
   const o = override.get(pkey(doc.id, n));
   if (o) return o;
-  // a page with no extractable text (a scan) is only useful as the original
-  if (!(S.texts.get(doc.id)?.[n] || '').trim()) return 'original';
+  // a PDF page with no extractable text (a scan) is only useful as the original
+  if (doc.kind === 'pdf' && !(S.texts.get(doc.id)?.[n] || '').trim()) return 'original';
   return prefs.view;
+}
+const HTML_FRAME_H = () => Math.round(Math.min(innerHeight * 0.78, 1000));
+
+// Which highlighted match (counting through the whole document) a page's first hit is, for the HTML view.
+function htmlOrdinal(doc, n, ranges) {
+  if (!S.matcher) return 0;
+  const pages = S.texts.get(doc.id) || [];
+  let before = 0;
+  for (let m = 0; m < n; m++) before += S.matcher.soft(pages[m]).length;
+  if (!ranges.length) return before;
+  const within = S.matcher.soft(pages[n] || '').findIndex((r) => r[0] === ranges[0][0]);
+  return before + Math.max(0, within);
 }
 
 function estimate(doc, n) {
   const z = zoomValue();
-  if (pageMode(doc, n) === 'original') return Math.round(BASE_W * z * S.pageAspect) + 56;
+  if (pageMode(doc, n) === 'original') return doc.kind === 'html' ? HTML_FRAME_H() + 44 : Math.round(BASE_W * z * S.pageAspect) + 56;
   const chars = (S.texts.get(doc.id)?.[n] || '').length;
   return Math.max(150, Math.round(chars * S.pxPerChar * z) + 80);
 }
@@ -237,7 +255,7 @@ function headHtml(v, doc, n, ctx) {
   else if (info) badge = `<span class="phits">${plural(info.ranges.length, 'hit')}</span>`;
   else if (v.kind === 'results') badge = '<span class="phits none">No hits</span>';
   const mode = pageMode(doc, n);
-  const toggle = doc.kind === 'pdf'
+  const toggle = hasOriginal(doc)
     ? `<button class="chip-btn" data-act="pmode" title="Switch between extracted text and the original page">${mode === 'original' ? I.text + 'Text' : I.image + 'Original'}</button>`
     : '';
   const open = v.kind === 'results'
@@ -276,7 +294,20 @@ function fill(art) {
   const token = (art._token = (art._token || 0) + 1);
 
   art._filled = (async () => {
-    if (pageMode(doc, n) === 'original') {
+    if (pageMode(doc, n) === 'original' && doc.kind === 'html') {
+      body.classList.add('loading');
+      try {
+        const cleanup = await renderHtmlPage({
+          docId: doc.id, n, pageCount: S.texts.get(doc.id)?.length || 1, host: body,
+          matcher: S.matcher, ordinal: htmlOrdinal(doc, n, ranges), zoom: zoomValue(),
+        });
+        if (token !== art._token) { cleanup(); return; }
+        art._cleanup = cleanup;
+      } catch (err) {
+        body.innerHTML = `<p class="empty-page">${I.warn}<span>Couldn’t show the original (${esc(err.message)}).</span></p>`;
+      }
+      body.classList.remove('loading');
+    } else if (pageMode(doc, n) === 'original') {
       body.classList.add('loading');
       try {
         const pdf = await getPdf(doc.id, () => store.file(doc.id));
@@ -556,8 +587,10 @@ function markCurrent(v) {
 }
 
 function topOffset() {
+  if (document.body.classList.contains('bar-hidden')) return 8;
   return ($('.topbar')?.offsetHeight || 0) + 8;
 }
+const isPhone = () => matchMedia('(max-width: 900px)').matches;
 
 function scrollToEl(target, block = 'center', force) {
   const r = target.getBoundingClientRect();
@@ -571,7 +604,7 @@ function scrollToEl(target, block = 'center', force) {
 }
 const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-async function goTo(v, k) {
+async function goTo(v, k, { instant = false } = {}) {
   if (!v.total) return;
   k = ((k % v.total) + v.total) % v.total;
   v.cur = k;
@@ -584,11 +617,11 @@ async function goTo(v, k) {
   if (v.cur !== k) return;
   const target = markCurrent(v) || art;
   const startY = scrollY;
-  v.navY = scrollToEl(target, 'center');
+  v.navY = scrollToEl(target, 'center', instant ? 'instant' : undefined);
   target.classList.remove('pulse');
   void target.offsetWidth;
   target.classList.add('pulse');
-  await settle(v, k, target, Math.abs(v.navY - startY) > innerHeight * 2.5);
+  await settle(v, k, target, instant || Math.abs(v.navY - startY) > innerHeight * 2.5);
 }
 
 // Pages around the target fill in after a jump and push it around; keep re-centering until it holds still.
@@ -705,6 +738,8 @@ function updateCounter() {
   c.textContent = !v.total ? 'No hits' : v.cur < 0 ? plural(v.total, 'hit') : `${fmt(v.cur + 1)} of ${fmt(v.total)}`;
   c.classList.toggle('zero', has && !v.total);
   $('#prevBtn').disabled = $('#nextBtn').disabled = !v.total;
+  $('#mCountText').textContent = !v.total ? '0' : v.cur < 0 ? fmt(v.total) : `${fmt(v.cur + 1)}/${fmt(v.total)}`;
+  ['mPrev', 'mNext', 'mPrevPage', 'mNextPage', 'mCount'].forEach((id) => ($('#' + id).disabled = !v.total));
   $('#clearBtn').hidden = !q.value;
 }
 
@@ -750,6 +785,7 @@ function updateSummary() {
   }
   const dock = $('#dock');
   dock.hidden = !(v.kind === 'reader' || showHead);
+  $('#mbar').hidden = dock.hidden;
   document.body.classList.toggle('has-dock', !dock.hidden);
 }
 
@@ -842,12 +878,13 @@ function syncControls() {
   $('#wordBtn').disabled = prefs.mode === 'regex';
   $('#sortSel').value = prefs.sort;
   $$('#viewSeg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === prefs.view)));
-  $('#viewSeg').hidden = !S.docs.some((d) => d.kind === 'pdf');
+  $('#viewSeg').hidden = !S.docs.some(hasOriginal);
   document.body.classList.toggle('compact', !!prefs.compact);
   document.body.classList.toggle('side-hidden', !!prefs.sideHidden);
   $('#compactBtn').title = prefs.compact ? `Show the full toolbar (${keyHint('toggleCompact')})` : `Minimize the toolbar (${keyHint('toggleCompact')})`;
   const flags = [prefs.matchCase ? 'Aa' : '', prefs.wholeWord && prefs.mode !== 'regex' ? '<u>ab</u>' : '', prefs.mode === 'near' ? `≤${prefs.near}` : ''].filter(Boolean);
   $('#modePill').innerHTML = `<span class="full">${MODE_SHORT[prefs.mode]}</span><span class="short">${MODE_TINY[prefs.mode]}</span>${flags.map((f) => `<em>${f}</em>`).join('')}<svg viewBox="0 0 24 24"><path d="M8 10l4 4 4-4"/></svg>`;
+  $('#mMode').innerHTML = $('#modePill').innerHTML;
   $('#zoomVal').textContent = Math.round(zoomValue() * 100) + '%';
   $('#fitWidth').setAttribute('aria-pressed', String(prefs.zoom === 'width'));
   $('#fitPage').setAttribute('aria-pressed', String(prefs.zoom === 'page'));
@@ -917,6 +954,7 @@ function finalizeRemoval() {
   const { doc } = pendingRemoval;
   pendingRemoval = null;
   closePdf(doc.id);
+  forgetHtml(doc.id);
   store.deleteDoc(doc.id).catch(() => {});
 }
 function undoRemoval() {
@@ -1242,6 +1280,7 @@ async function ingest(file, meta) {
     const chars = pages.reduce((a, p) => a + p.trim().length, 0);
     meta.pages = pages.length;
     meta.noText = meta.kind === 'pdf' && chars < pages.length * 25;
+    if (meta.kind === 'html' && bytes) meta.hasOriginal = true;
     if (!S.docs.includes(meta)) return; // removed while reading
     if (meta.folderId && !folderById(meta.folderId)) meta.folderId = null;
     delete meta.status;
@@ -1363,6 +1402,16 @@ function bind() {
   let resizeTimer;
   addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (typeof prefs.zoom === 'string') applyZoom(); }, 150); });
   $('#compactBtn').addEventListener('click', toggleCompact);
+  // phone reading bar
+  bindModeScrub($('#mMode'), { startIndex: () => Object.keys(MODES).indexOf(prefs.mode), onTap: () => modeMenu($('#mMode')) });
+  bindHoldMenu($('#mMore'), moreItems);
+  bindJog($('#mCount'));
+  $('#mPrev').addEventListener('click', () => step(-1));
+  $('#mNext').addEventListener('click', () => step(1));
+  $('#mPrevPage').addEventListener('click', () => stepPage(-1));
+  $('#mNextPage').addEventListener('click', () => stepPage(1));
+  addEventListener('scroll', onScrollBars, { passive: true });
+  q.addEventListener('focus', () => setBarHidden(false));
   $('#keysBtn').addEventListener('click', openKeys);
 
   // search type pill (compact toolbar) and the full segmented control both support press-and-drag
@@ -1877,7 +1926,8 @@ function bindModeScrub(el, { onTap, startIndex }) {
     closeMenu();
     const bar = el.ownerDocument.createElement('div');
     bar.className = 'scrubber';
-    bar.innerHTML = modes.map((m) => `<span data-mode="${m}">${MODE_SHORT[m]}</span>`).join('');
+    const names = innerWidth < 600 ? MODE_TINY : MODE_SHORT;
+    bar.innerHTML = modes.map((m) => `<span data-mode="${m}">${names[m]}</span>`).join('');
     document.body.append(bar);
     const r = el.getBoundingClientRect();
     const item = bar.children[st.idx];
@@ -1885,7 +1935,7 @@ function bindModeScrub(el, { onTap, startIndex }) {
     let left = st.x - center;
     left = Math.max(8, Math.min(innerWidth - bar.offsetWidth - 8, left));
     bar.style.left = left + 'px';
-    bar.style.top = r.bottom + 8 + 'px';
+    bar.style.top = (r.bottom + 8 + bar.offsetHeight > innerHeight - 8 ? r.top - bar.offsetHeight - 10 : r.bottom + 8) + 'px';
     st.bar = bar;
     mark();
     el.classList.add('scrubbing');
@@ -1924,6 +1974,139 @@ function bindModeScrub(el, { onTap, startIndex }) {
     e.stopPropagation(); // the pointer handlers already acted; don't let the page close a menu we just opened
     if (e.detail === 0) onTap({ idx: startIndex(e) }); // keyboard activation
   });
+}
+
+// Press and hold (or press and slide) opens the menu; slide onto an option and let go to pick it.
+// A plain tap opens the same menu to tap through.
+function bindHoldMenu(el, getItems) {
+  let st = null;
+  const hot = (x, y) => {
+    let found = null;
+    for (const it of $$('.pop-menu .menu-item')) {
+      const r = it.getBoundingClientRect();
+      const on = !it.disabled && y >= r.top && y < r.bottom && x > r.left - 60 && x < r.right + 60;
+      it.classList.toggle('hot', on);
+      if (on) found = it;
+    }
+    if (found && st && found !== st.last) { st.last = found; navigator.vibrate?.(4); }
+    return found;
+  };
+  const open = () => {
+    st.open = true;
+    clearTimeout(st.timer);
+    closeMenu();
+    openMenu(el, getItems());
+    el.classList.add('holding');
+    navigator.vibrate?.(8);
+  };
+  el.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    const wasOpen = el.classList.contains('menu-open');
+    st = { x: e.clientX, y: e.clientY, open: false, wasOpen };
+    el.setPointerCapture(e.pointerId);
+    st.timer = setTimeout(open, 240);
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (!st) return;
+    if (!st.open && Math.hypot(e.clientX - st.x, e.clientY - st.y) > 10) open();
+    if (st.open) hot(e.clientX, e.clientY);
+  });
+  const end = (e, apply) => {
+    if (!st) return;
+    clearTimeout(st.timer);
+    const s = st;
+    st = null;
+    el.classList.remove('holding');
+    if (s.open) {
+      const target = apply && e ? hot(e.clientX, e.clientY) : null;
+      if (target) target.click();
+      else if (apply && e && Math.hypot(e.clientX - s.x, e.clientY - s.y) > 10) closeMenu(); // slid off: nothing picked
+      // held still and let go: leave the menu open to tap
+    } else if (apply) {
+      if (s.wasOpen) closeMenu(); else openMenu(el, getItems());
+    }
+  };
+  el.addEventListener('pointerup', (e) => end(e, true));
+  el.addEventListener('pointercancel', () => end(null, false));
+  el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (e.detail === 0) openMenu(el, getItems());
+  });
+}
+
+function moreItems() {
+  const items = [];
+  if (S.docs.some(hasOriginal)) {
+    items.push({ header: 'Pages' },
+      { label: 'Text', icon: I.text, checked: prefs.view === 'text', run: () => setView('text') },
+      { label: 'Original', icon: I.image, checked: prefs.view === 'original', run: () => setView('original') });
+  }
+  items.push({ header: `Zoom · ${Math.round(zoomValue() * 100)}%` },
+    { label: 'Zoom in', icon: I.plus, run: () => zoomBy(1) },
+    { label: 'Zoom out', icon: I.minus, run: () => zoomBy(-1) },
+    { label: 'Fit width', icon: I.fitW, checked: prefs.zoom === 'width', run: () => setZoom(prefs.zoom === 'width' ? 1 : 'width') },
+    { label: 'Fit page', icon: I.fitP, checked: prefs.zoom === 'page', run: () => setZoom(prefs.zoom === 'page' ? 1 : 'page') });
+  items.push({ header: 'Search' },
+    { label: 'Match case', checked: prefs.matchCase, run: () => { prefs.matchCase = !prefs.matchCase; runSearch(); } },
+    { label: 'Whole words only', checked: prefs.wholeWord, disabled: prefs.mode === 'regex', run: () => { prefs.wholeWord = !prefs.wholeWord; runSearch(); } });
+  if (active === results) {
+    items.push({ header: 'Sort' },
+      ...[['library', 'Library order'], ['hits', 'Documents with most hits'], ['pages', 'Pages with most hits']].map(([k, label]) => ({ label, checked: prefs.sort === k, run: () => { prefs.sort = k; runSearch(); } })));
+  }
+  items.push({ sep: true });
+  if (active === reader) items.push({ label: 'Back to results', icon: I.arrowLeft, run: () => closeReader() });
+  items.push({ label: 'Library', icon: I.folder, run: () => toggleLibrary() });
+  return items;
+}
+
+// Slide along the hit counter to scrub through hits one by one; tap it for the next hit.
+function bindJog(el) {
+  let j = null;
+  el.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || !active.total) return;
+    const v = active;
+    const moved = v.navY == null || Math.abs(scrollY - v.navY) > innerHeight * 0.8;
+    j = { x: e.clientX, start: v.cur >= 0 && !moved ? v.cur : Math.max(0, startFromViewport(v, 1)), moved: false, last: v.cur };
+    el.setPointerCapture(e.pointerId);
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (!j) return;
+    const dx = e.clientX - j.x;
+    if (!j.moved && Math.abs(dx) > 8) { j.moved = true; el.classList.add('jogging'); }
+    if (!j.moved) return;
+    const k = Math.max(0, Math.min(active.total - 1, j.start + Math.trunc(dx / 22)));
+    if (k !== j.last) { j.last = k; navigator.vibrate?.(3); goTo(active, k, { instant: true }); }
+  });
+  const end = (apply) => {
+    if (!j) return;
+    const s = j;
+    j = null;
+    el.classList.remove('jogging');
+    if (!s.moved && apply) step(1);
+  };
+  el.addEventListener('pointerup', () => end(true));
+  el.addEventListener('pointercancel', () => end(false));
+  el.addEventListener('click', (e) => { e.stopPropagation(); if (e.detail === 0) step(1); });
+}
+
+// On phones the top bar slides away while you read and comes back when you scroll up.
+let lastScrollY = 0;
+let scrollAcc = 0;
+function setBarHidden(h) {
+  if (document.body.classList.contains('bar-hidden') !== h) document.body.classList.toggle('bar-hidden', h);
+}
+function onScrollBars() {
+  const y = scrollY;
+  const dy = y - lastScrollY;
+  lastScrollY = y;
+  if (!isPhone() || y < 60 || document.activeElement === q || document.body.classList.contains('drawer') || $('.pop-menu')) {
+    setBarHidden(false);
+    scrollAcc = 0;
+    return;
+  }
+  scrollAcc = Math.sign(dy) === Math.sign(scrollAcc) ? scrollAcc + dy : dy;
+  if (scrollAcc > 30) setBarHidden(true);
+  else if (scrollAcc < -30) setBarHidden(false);
 }
 
 function setMode(mode) {

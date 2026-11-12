@@ -131,6 +131,15 @@
           <button class="fit" id="fitPage" title="Fit page (F)" aria-label="Fit page"><svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="1.5"/><path d="M9 8h6M9 12h6M9 16h3"/></svg></button>
         </div>
       </div>
+      <nav class="mbar" id="mbar" aria-label="Reading controls" hidden>
+        <button class="mode-pill m-mode" id="mMode" type="button" title="Search type — tap, or hold and slide sideways"></button>
+        <button class="mb" id="mPrevPage" aria-label="Previous page with hits"><svg viewBox="0 0 24 24"><path d="M17 18l-5-5-5 5M17 11l-5-5-5 5"/></svg></button>
+        <button class="mb" id="mPrev" aria-label="Previous hit"><svg viewBox="0 0 24 24"><path d="M18 15l-6-6-6 6"/></svg></button>
+        <button class="m-count" id="mCount" aria-label="Hits — tap for next, hold and slide to scrub through hits"><span id="mCountText">0</span><i class="jog" aria-hidden="true"></i></button>
+        <button class="mb" id="mNext" aria-label="Next hit"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+        <button class="mb" id="mNextPage" aria-label="Next page with hits"><svg viewBox="0 0 24 24"><path d="M7 6l5 5 5-5M7 13l5 5 5-5"/></svg></button>
+        <button class="mb" id="mMore" aria-label="View options — tap, or hold and slide to pick"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
+      </nav>
     </main>
   </div>
 

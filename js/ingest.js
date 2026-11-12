@@ -91,7 +91,7 @@ function rtfToText(rtf) {
     .replace(/[{}]/g, '');
 }
 
-/** Returns { pages, kind, bytes? } — bytes kept for PDFs so the original page can be shown. */
+/** Returns { pages, kind, bytes? } — bytes kept for PDFs and HTML so the original can be shown. */
 export async function readFile(file, onProgress) {
   const kind = kindOf(file.name);
   if (!kind) throw new Error('Unsupported file type');
@@ -106,7 +106,7 @@ export async function readFile(file, onProgress) {
     return { kind, pages: paginate(value) };
   }
   const raw = await file.text();
-  if (kind === 'html') return { kind, pages: paginate(htmlToText(raw)) };
+  if (kind === 'html') return { kind, pages: paginate(htmlToText(raw)), bytes: raw }; // raw kept for the Original view
   if (kind === 'rtf') return { kind, pages: paginate(rtfToText(raw)) };
   return { kind, pages: paginate(raw) };
 }
