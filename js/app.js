@@ -1574,7 +1574,9 @@ function review({ title, intro = '', rows, options = [], apply = 'Apply', cancel
       if (r.info) return `<div class="rrow info ${r.tone || ''}">${body}</div>`;
       return `<label class="rrow ${r.tone || ''}"><input type="checkbox" data-i="${i}" ${r.checked ? 'checked' : ''}>${body}</label>`;
     }).join('');
-    $('#reviewOpts').innerHTML = options.map((o) => `<label class="check-row"><input type="checkbox" data-o="${o.id}" ${o.checked ? 'checked' : ''}> ${esc(o.label)}</label>`).join('');
+    $('#reviewOpts').innerHTML = options.map((o) => o.choices
+      ? `<div class="choice" role="radiogroup" aria-label="${esc(o.label || '')}">${o.label ? `<div class="choice-title">${esc(o.label)}</div>` : ''}${o.choices.map((c) => `<label class="choice-card"><input type="radio" name="opt-${o.id}" data-c="${o.id}" value="${c.value}" ${c.value === o.value ? 'checked' : ''}><span><b>${esc(c.label)}</b><em>${esc(c.hint || '')}</em></span></label>`).join('')}</div>`
+      : `<label class="check-row"><input type="checkbox" data-o="${o.id}" ${o.checked ? 'checked' : ''}> ${esc(o.label)}</label>`).join('');
     const actionable = rows.some((r) => !r.header && !r.info);
     $('#reviewApply').hidden = !actionable;
     $('#reviewApply').textContent = apply;
@@ -1584,7 +1586,8 @@ function review({ title, intro = '', rows, options = [], apply = 'Apply', cancel
       if (done) return;
       done = true;
       const picked = new Set($$('#reviewList input:checked').map((x) => rows[Number(x.dataset.i)]));
-      const opts = Object.fromEntries($$('#reviewOpts input').map((x) => [x.dataset.o, x.checked]));
+      const opts = Object.fromEntries($$('#reviewOpts input[data-o]').map((x) => [x.dataset.o, x.checked]));
+      for (const x of $$('#reviewOpts input[data-c]:checked')) opts[x.dataset.c] = x.value;
       $('#reviewApply').onclick = $('#reviewCancel').onclick = null;
       dlg.onclose = null;
       if (dlg.open) dlg.close();
@@ -1755,7 +1758,12 @@ async function pickFromPage(pageUrl, links, title, folderId) {
     title: 'Add documents from this page',
     intro: 'Pick the documents to add. Pages often list a whole book <i>and</i> its parts (chapters, or changes already included in a combined edition) — those parts start unticked so you don’t get every hit twice.',
     rows,
-    options: [{ id: 'link', label: 'Keep watching this page — when you press ↻ Check for updates, also look here for newly added documents and new editions (recommended)', checked: true }],
+    options: [{
+      id: 'link', label: 'After adding them', value: 'watch', choices: [
+        { value: 'watch', label: 'Keep them up to date', hint: 'When you press ↻, the app checks this page for new versions and new documents.' },
+        { value: 'once', label: 'Just this once', hint: 'Download these now and forget the page. They won’t be updated.' },
+      ],
+    }],
     apply: 'Add',
   });
   if (!res) return;
@@ -1764,7 +1772,7 @@ async function pickFromPage(pageUrl, links, title, folderId) {
   let fid = folderId;
   if (!fid) fid = createFolder((title || 'Linked documents').split(/\s[|–—-]\s/)[0].slice(0, 80)).id;
   const f = folderById(fid);
-  if (res.options.link) {
+  if (res.options.link === 'watch') {
     f.source = { url: pageUrl, title, ignored: rows.filter((r) => r.link && !res.picked.has(r)).map((r) => r.link.url), checkedAt: Date.now() };
     saveFolders();
   }
